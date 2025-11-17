@@ -153,26 +153,28 @@ export function RechargeForm({ setOpen }: RechargeFormProps) {
 
         {/* Phone Number Field (Conditional) */}
         {selectedMethod && (
-          <FormField
-            control={form.control}
-            name="rechargePhoneNumber"
-            render={({ field }) => (
-              <FormItem>
-                <FormLabel>Numéro de téléphone ({selectedMethod})</FormLabel>
-                <FormControl>
-                  <Input
-                    placeholder="+237XXXXXXXXX"
-                    {...field}
-                    className="bg-gray-800 border-gray-700"
-                  />
-                </FormControl>
-                <FormDescription>
-                  Le numéro {selectedMethod} qui sera débité. Format: +237XXXXXXXXX
-                </FormDescription>
-                <FormMessage />
-              </FormItem>
-            )}
-          />
+          <div key={`phone-${selectedMethod}`}>
+            <FormField
+              control={form.control}
+              name="rechargePhoneNumber"
+              render={({ field }) => (
+                <FormItem>
+                  <FormLabel>Numéro de téléphone ({selectedMethod})</FormLabel>
+                  <FormControl>
+                    <Input
+                      placeholder="+237XXXXXXXXX"
+                      {...field}
+                      className="bg-gray-800 border-gray-700"
+                    />
+                  </FormControl>
+                  <FormDescription>
+                    Le numéro {selectedMethod} qui sera débité. Format: +237XXXXXXXXX
+                  </FormDescription>
+                  <FormMessage />
+                </FormItem>
+              )}
+            />
+          </div>
         )}
 
         {/* Submit Button */}

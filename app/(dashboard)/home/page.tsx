@@ -8,7 +8,7 @@ import { Button } from '@/components/ui/button';
 import { History, QrCode } from 'lucide-react';
 import { Metadata } from 'next';
 import Link from 'next/link';
-import { RechargeModal } from '@/components/dashboard/RechargeModal';
+import { RechargeModalWrapper } from '@/components/dashboard/RechargeModalWrapper';
 import { HistoryModal } from '@/components/dashboard/HistoryModal';
 
 /**
@@ -86,8 +86,7 @@ export default async function HomePage() {
         </CardContent>
       </Card>
 
-      {/* ✅ FIXED: Recharge Button moved outside Card */}
-      <RechargeModal />
+      <RechargeModalWrapper />
 
       {/* Full-Width Pay Button */}
       <Link href="/pay">
