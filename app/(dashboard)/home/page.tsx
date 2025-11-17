@@ -8,17 +8,14 @@ import { Button } from '@/components/ui/button';
 import { History, QrCode } from 'lucide-react';
 import { Metadata } from 'next';
 import Link from 'next/link';
-import { RechargeModal } from '@/components/dashboard/RechargeModal'; // We keep this modal
+import { RechargeModal } from '@/components/dashboard/RechargeModal';
 import { HistoryModal } from '@/components/dashboard/HistoryModal';
 
 /**
  * File: /app/(dashboard)/home/page.tsx
  * Purpose: The main passenger dashboard.
  *
- * UPDATED:
- * 1. Now a dynamic Server Component (fetches real name/ID/balance).
- * 2. Implements your new layout (full-width Pay, no History button).
- * 3. Adds a "Voir tout" (See all) link for history.
+ * FIXED: Moved RechargeModal outside Card to prevent DOM reconciliation issues
  */
 
 export const metadata: Metadata = {
@@ -36,23 +33,23 @@ function formatCurrency(amount: number) {
 
 // Pattern to get data
 async function getPassengerData() {
-  const cookieStore = await cookies(); // 1. Call cookies() at the top
-  const supabase = createCookieServerClient(cookieStore); // 2. Pass it in
+  const cookieStore = await cookies();
+  const supabase = createCookieServerClient(cookieStore);
 
-  // 3. Get the current user session
-  const { data: { session }, } = await supabase.auth.getSession();
+  // Get the current user session
+  const { data: { session } } = await supabase.auth.getSession();
   if (!session) {
     return redirect('/signup');
   }
 
-  // 4. Get the passenger profile from MongoDB
+  // Get the passenger profile from MongoDB
   await dbConnect();
   const passenger = await Passenger.findOne({ authId: session.user.id });
   if (!passenger) {
     return redirect('/signup');
   }
   
-  // 5. TODO: Fetch real transaction data
+  // TODO: Fetch real transaction data
   const lastTransaction = {
     type: 'Paiement au Chauffeur',
     amount: 150,
@@ -86,12 +83,12 @@ export default async function HomePage() {
         </CardHeader>
         <CardContent>
           <div className="text-3xl font-bold">{formatCurrency(walletBalance)}</div>
-          {/* The Recharge button still opens a Modal */}
-          <RechargeModal />
         </CardContent>
       </Card>
 
-      {/* THIS IS YOUR NEW LAYOUT */}
+      {/* ✅ FIXED: Recharge Button moved outside Card */}
+      <RechargeModal />
+
       {/* Full-Width Pay Button */}
       <Link href="/pay">
         <Card className="bg-card bg-gray-900 border-gray-800 hover:bg-gray-800 cursor-pointer">
@@ -104,13 +101,12 @@ export default async function HomePage() {
 
       {/* Last Transaction */}
       <div>
-        {/* THIS IS YOUR NEW LINK */}
         <div className="flex justify-between items-center mb-2">
           <h2 className="text-lg font-semibold">Activité récente</h2>
-           <HistoryModal>
-              <Button variant="link" className="p-0 text-white">
-                 Voir tout
-              </Button>
+          <HistoryModal>
+            <Button variant="link" className="p-0 text-white">
+              Voir tout
+            </Button>
           </HistoryModal>
         </div>
         
