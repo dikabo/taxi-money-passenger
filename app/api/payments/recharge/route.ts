@@ -89,7 +89,7 @@ export async function POST(req: NextRequest) {
             amount: amountAsNumber,
             phone: rechargePhoneNumber,
             external_id: transactionId,
-            webhook_url: `https://taxi-money-passenger.vercel.app/api/webhooks/fapshi`,
+            webhook_url: `${process.env.NEXT_PUBLIC_APP_URL}/api/webhooks/fapshi`,
           }),
         }
       );
