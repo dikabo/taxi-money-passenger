@@ -7,7 +7,7 @@ import { z } from 'zod';
  * FIXED: Proper type inference and validation for all fields
  */
 
-const cameroonPhoneRegex = /^\+237[6-8]\d{8}$/;
+const cameroonPhoneRegex = /^[6-8]\d{8}$/;
 const pinRegex = /^\d{4}$/;
 const passwordRegex = /^(?=.*[A-Za-z])(?=.*\d)(?=.*[@$!%*?&])[A-Za-z\d@$!%*?&]{8,}$/;
 
@@ -21,7 +21,7 @@ export const passengerSignupSchema = z.object({
   firstName: z.string().min(2, 'Le prénom doit contenir au moins 2 caractères'),
   lastName: z.string().min(2, 'Le nom doit contenir au moins 2 caractères'),
   phoneNumber: z.string().regex(cameroonPhoneRegex, {
-    message: 'Le numéro doit être au format +237XXXXXXXXX',
+    message: 'Le numéro doit être au format 6XXXXXXXX',
   }),
   password: z.string().regex(passwordRegex, {
     message: '8+ caractères, avec lettre, chiffre et symbole.',
@@ -44,7 +44,7 @@ export const passengerSignupSchema = z.object({
 
 export const passengerOtpSchema = z.object({
   phoneNumber: z.string().regex(cameroonPhoneRegex, {
-    message: 'Le numéro doit être au format +237XXXXXXXXX',
+    message: 'Le numéro doit être au format 6XXXXXXXX',
   }),
   token: z
     .string()
