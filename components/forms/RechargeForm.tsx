@@ -56,7 +56,7 @@ export function RechargeForm({ setOpen }: RechargeFormProps) {
     defaultValues: {
       amount: '',
       method: undefined,
-      rechargePhoneNumber: '+237',
+      rechargePhoneNumber: '699123456',
     },
   });
 
@@ -73,7 +73,7 @@ export function RechargeForm({ setOpen }: RechargeFormProps) {
       // - Phone prefix stripping
       // - Method to medium mapping
       // - externalId generation
-      const response = await fetch('/api/payments/recharge/route.ts', {
+      const response = await fetch('/api/payments/recharge', {
         method: 'POST',
         headers: { 
           'Content-Type': 'application/json',
@@ -81,7 +81,7 @@ export function RechargeForm({ setOpen }: RechargeFormProps) {
         body: JSON.stringify({
           amount: values.amount, // String from form (e.g., "1000")
           method: values.method, // String (e.g., "MTN" or "Orange")
-          rechargePhoneNumber: values.rechargePhoneNumber, // String (e.g., "+237671234567")
+          rechargePhoneNumber: values.rechargePhoneNumber, // String (e.g., "671234567")
         }),
       });
 
