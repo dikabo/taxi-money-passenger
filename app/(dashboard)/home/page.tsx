@@ -5,7 +5,7 @@ import Passenger from '@/lib/db/models/Passenger';
 import { redirect } from 'next/navigation';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
-import { History, QrCode } from 'lucide-react';
+import { History, QrCode, Wallet } from 'lucide-react';
 import { Metadata } from 'next';
 import Link from 'next/link';
 import { RechargeModalWrapper } from '@/components/dashboard/RechargeModalWrapper';
@@ -63,7 +63,7 @@ export default async function HomePage() {
   const { passenger, lastTransaction } = await getPassengerData();
 
   const passengerName = passenger.firstName;
-  const walletBalance = passenger.walletBalance;
+  const WalletBalance = passenger.wallet;
   const passengerId = passenger.authId.substring(0, 8).toUpperCase();
 
   return (
@@ -82,7 +82,7 @@ export default async function HomePage() {
           <CardTitle className="text-sm font-medium">Solde de votre portefeuille</CardTitle>
         </CardHeader>
         <CardContent>
-          <div className="text-3xl font-bold">{formatCurrency(walletBalance)}</div>
+          <div className="text-3xl font-bold">{formatCurrency(WalletBalance)}</div>
         </CardContent>
       </Card>
 

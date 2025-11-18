@@ -37,6 +37,8 @@ import { Loader2 } from 'lucide-react';
  * - Displays transaction ID on success
  * - Proper error handling and loading states
  * - Uses Fapshi webhook for balance updates
+ *
+ * FIXED: Send data in the exact format the backend expects
  */
 
 type RechargeFormValues = z.infer<typeof rechargeSchema>;
@@ -65,11 +67,22 @@ export function RechargeForm({ setOpen }: RechargeFormProps) {
     setIsLoading(true);
 
     try {
-      // Call recharge API
+      // FIXED: Send the exact same data structure from the form
+      // Backend validates and processes it
+      // NO need to transform here - backend handles:
+      // - Phone prefix stripping
+      // - Method to medium mapping
+      // - externalId generation
       const response = await fetch('/api/payments/recharge', {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(values),
+        headers: { 
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({
+          amount: values.amount, // String from form (e.g., "1000")
+          method: values.method, // String (e.g., "MTN" or "Orange")
+          rechargePhoneNumber: values.rechargePhoneNumber, // String (e.g., "+237671234567")
+        }),
       });
 
       const result = await response.json();
@@ -79,9 +92,11 @@ export function RechargeForm({ setOpen }: RechargeFormProps) {
       }
 
       // Success: Show transaction ID and instructions
-      const transactionId = result.transactionId;
+      const transactionId = result.transId || result.transactionId;
+      const phoneDisplay = values.rechargePhoneNumber;
+
       sonnerToast.success('Rechargement initié!', {
-        description: `Transaction ID: ${transactionId}\n\nVeuillez confirmer la transaction de ${values.amount} XAF sur le ${values.rechargePhoneNumber}. Vous recevrez un USSD pour valider.`,
+        description: `Transaction ID: ${transactionId}\n\nVeuillez confirmer la transaction de ${values.amount} XAF sur le ${phoneDisplay}. Vous recevrez un USSD pour valider.`,
       });
 
       setIsLoading(false);

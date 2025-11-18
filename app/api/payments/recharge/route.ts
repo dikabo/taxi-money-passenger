@@ -9,16 +9,18 @@ import Transaction, { ITransaction } from '@/lib/db/models/Transaction';
 
 /**
  * File: /app/api/payments/recharge/route.ts
- * Purpose: API endpoint to INITIATE a wallet recharge request.
+ * Purpose: API endpoint to INITIATE a wallet recharge request via Fapshi Direct Pay.
  *
  * Flow:
  * 1. Authenticate user via Supabase
  * 2. Validate recharge request data
  * 3. Check passenger exists
  * 4. Create PENDING transaction in MongoDB
- * 5. Call Fapshi /deposit API
- * 6. Update transaction with Fapshi ID on success
+ * 5. Call Fapshi Direct Pay API
+ * 6. Update transaction with Fapshi transaction ID on success
  * 7. Return response to client
+ *
+ * FIXED: Properly type passenger._id to avoid TypeScript errors
  */
 
 export async function POST(req: NextRequest) {
@@ -47,6 +49,16 @@ export async function POST(req: NextRequest) {
     const { amount, method, rechargePhoneNumber } = validation.data;
     const amountAsNumber = Number(amount);
 
+    // FIXED: Strip +237 prefix from phone number (Fapshi expects 67XXXXXXX format)
+    const phoneWithoutPrefix = rechargePhoneNumber.replace(/^\+237/, '');
+
+    // FIXED: Map method to Fapshi medium format
+    const mediumMap: { [key: string]: string } = {
+      'MTN': 'mobile money',
+      'Orange': 'orange money',
+    };
+    const paymentMedium = mediumMap[method];
+
     // 3. Get Passenger from DB
     await dbConnect();
     const passenger = await Passenger.findOne({ authId: session.user.id });
@@ -55,73 +67,100 @@ export async function POST(req: NextRequest) {
       return NextResponse.json({ error: 'Passager non trouvé' }, { status: 404 });
     }
 
-    // 4. Create PENDING Transaction
+    // FIXED: Explicitly cast passenger._id to string to avoid TypeScript 'unknown' error
+    const passengerId = passenger._id?.toString();
+    
+    if (!passengerId) {
+      return NextResponse.json({ error: 'Passenger ID invalid' }, { status: 400 });
+    }
+
+    // 4. Create PENDING Transaction with externalId for webhook mapping
     // ✅ Properly typed and casted
+    const externalId = `recharge-${Date.now()}-${passengerId}`;
+
     const transaction = (await Transaction.create({
-      userId: passenger._id,
+      userId: passenger._id, // MongoDB automatically handles ObjectId
       userType: 'Passenger',
       type: 'Recharge',
       status: 'Pending',
       amount: amountAsNumber, // Recharge is positive
       method: method,
       phoneNumber: rechargePhoneNumber,
+      externalId: externalId, // FIXED: Added for webhook mapping
     })) as ITransaction;
 
     const transactionId = transaction._id?.toString() || '';
 
     console.log(`[API] Created PENDING transaction: ${transactionId}`);
+    console.log(`[API] ExternalId: ${externalId}`);
     console.log(`[API] Amount: ${amountAsNumber} XAF`);
-    console.log(`[API] Phone: ${rechargePhoneNumber}`);
+    console.log(`[API] Phone: ${phoneWithoutPrefix} (stripped from ${rechargePhoneNumber})`);
+    console.log(`[API] Medium: ${paymentMedium}`);
 
-    // 5. Call Fapshi /deposit
-    console.log('[API] Calling Fapshi /deposit...');
+    // 5. Call Fapshi Direct Pay API
+    console.log('[API] Calling Fapshi Direct Pay...');
+
+    const fapshiApiKey = process.env.FAPSHI_API_KEY;
+    if (!fapshiApiKey) {
+      throw new Error('FAPSHI_API_KEY not configured');
+    }
 
     try {
+      // FIXED: Updated to use Direct Pay endpoint with correct parameters
       const fapshiResponse = await fetch(
-        `${process.env.NEXT_PUBLIC_FAPSHI_API_BASE}/deposit`,
+        'https://api.fapshi.com/direct-pay',
         {
           method: 'POST',
           headers: {
-            'Authorization': `Bearer ${process.env.FAPSHI_API_KEY}`,
+            'Authorization': `Bearer ${fapshiApiKey}`,
             'Content-Type': 'application/json',
           },
           body: JSON.stringify({
             amount: amountAsNumber,
-            phone: rechargePhoneNumber,
-            external_id: transactionId,
-            webhook_url: `${process.env.NEXT_PUBLIC_APP_URL}/api/webhooks/fapshi`,
+            phone: phoneWithoutPrefix, // FIXED: Without +237 prefix
+            medium: paymentMedium, // FIXED: Use "mobile money" or "orange money"
+            externalId: externalId, // FIXED: For webhook mapping and reconciliation
+            userId: passengerId, // FIXED: Use properly typed passengerId
+            message: 'Wallet recharge for transportation service',
           }),
         }
       );
 
-      if (!fapshiResponse.ok) {
-        await Transaction.findByIdAndUpdate(transactionId, { status: 'Failed' });
-        throw new Error('Fapshi API returned error');
-      }
-
       const fapshiResult = await fapshiResponse.json();
 
-      // 6. Update transaction with Fapshi ID
+      if (!fapshiResponse.ok) {
+        console.error('[API] Fapshi error response:', fapshiResult);
+        await Transaction.findByIdAndUpdate(transactionId, { status: 'Failed' });
+        throw new Error(fapshiResult.message || 'Fapshi API returned error');
+      }
+
+      // 6. Update transaction with Fapshi transaction ID
+      // FIXED: Use correct field name 'transId' (not 'transaction_id')
+      const fapshiTransactionId = fapshiResult.transId;
+
       await Transaction.findByIdAndUpdate(transactionId, {
-        fapshiTransactionId: fapshiResult.transaction_id,
+        fapshiTransactionId: fapshiTransactionId,
       });
 
-      console.log(`[API] Fapshi accepted deposit: ${fapshiResult.transaction_id}`);
+      console.log(`[API] ✅ Fapshi accepted recharge: ${fapshiTransactionId}`);
+
+      // 7. Return Success Response
+      return NextResponse.json(
+        {
+          success: true,
+          message: 'Demande de rechargement initiée. Veuillez valider sur votre téléphone.',
+          transId: fapshiTransactionId, // Return Fapshi transaction ID to frontend
+          transactionId: transactionId,
+        },
+        { status: 200 }
+      );
+
     } catch (fapshiError) {
       console.error('[API] Fapshi error:', fapshiError);
       await Transaction.findByIdAndUpdate(transactionId, { status: 'Failed' });
       throw fapshiError;
     }
 
-    // 7. Return Success Response
-    return NextResponse.json(
-      {
-        success: true,
-        message: 'Demande de rechargement initiée. Veuillez valider sur votre téléphone.',
-        transactionId: transactionId,
-      },
-      { status: 200 }
-    );
   } catch (error) {
     console.error('[Recharge API] Error:', error);
 
@@ -132,8 +171,9 @@ export async function POST(req: NextRequest) {
       );
     }
 
+    const errorMessage = error instanceof Error ? error.message : 'Une erreur inattendue est survenue';
     return NextResponse.json(
-      { error: 'Une erreur inattendue est survenue' },
+      { error: errorMessage },
       { status: 500 }
     );
   }

@@ -4,8 +4,7 @@ import { z } from 'zod';
  * File: /lib/validations/passenger-auth.ts
  * Purpose: Zod schemas for passenger authentication and payments.
  *
- * FIXED: Recharge schema now properly handles optional phone field
- * until method is selected (conditional rendering).
+ * FIXED: Proper type inference and validation for all fields
  */
 
 const cameroonPhoneRegex = /^\+237[6-8]\d{8}$/;
@@ -15,6 +14,7 @@ const passwordRegex = /^(?=.*[A-Za-z])(?=.*\d)(?=.*[@$!%*?&])[A-Za-z\d@$!%*?&]{8
 // ✅ FIXED: Define numericString helper (reusable for all numeric string fields)
 const numericString = z
   .string()
+  .trim()
   .regex(/^\d+$/, 'Doit être un nombre valide');
 
 export const passengerSignupSchema = z.object({
@@ -58,8 +58,9 @@ export const pinLoginSchema = z.object({
   }),
 });
 
-// ✅ FIXED: Recharge schema with conditional phone validation
-// Phone is optional until method is selected, then required
+// ✅ FIXED: Recharge schema with proper validation
+// All fields are required and have explicit types
+// This ensures type safety in RechargeForm and backend
 export const rechargeSchema = z.object({
   amount: numericString
     .min(1, 'Veuillez entrer un montant.')
@@ -69,29 +70,14 @@ export const rechargeSchema = z.object({
     .refine((val) => Number(val) <= 5000, {
       message: 'Le rechargement maximum est de 5,000 XAF',
     }),
-  method: z.string().min(1, 'Veuillez choisir une méthode.'),
-  
-  // ✅ FIXED: Phone number is optional (allows empty string) but when provided must match regex
+  method: z.enum(['MTN', 'Orange'] as const, {
+    message: 'Veuillez choisir une méthode valide (MTN ou Orange).',
+  }),
   rechargePhoneNumber: z
     .string()
-    .optional()
-    .refine(
-      (val) => !val || cameroonPhoneRegex.test(val),
-      'Veuillez saisir un numéro MoMo valide (+237...)'
-    ),
-}).refine(
-  // ✅ ADDED: Refinement to ensure phone is provided when method is selected
-  (data) => {
-    if (data.method && !data.rechargePhoneNumber) {
-      return false;
-    }
-    return true;
-  },
-  {
-    message: 'Veuillez entrer un numéro de téléphone MoMo',
-    path: ['rechargePhoneNumber'],
-  }
-);
+    .min(1, 'Veuillez entrer un numéro de téléphone')
+    .regex(cameroonPhoneRegex, 'Veuillez saisir un numéro MoMo valide (+237...)'),
+});
 
 // ✅ NEW SCHEMA FOR PAYING A DRIVER (with Fapshi support)
 export const payDriverSchema = z.object({
@@ -106,7 +92,7 @@ export const payDriverSchema = z.object({
   }),
 });
 
-// ✅ TYPE EXPORTS
+// ✅ TYPE EXPORTS - These are inferred from schemas for type safety
 export type RechargeFormValues = z.infer<typeof rechargeSchema>;
 export type PayDriverFormValues = z.infer<typeof payDriverSchema>;
 export type PassengerSignupValues = z.infer<typeof passengerSignupSchema>;

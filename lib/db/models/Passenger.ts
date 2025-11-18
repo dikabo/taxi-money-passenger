@@ -14,7 +14,7 @@ export interface IPassenger extends Document {
   phoneNumber: string;
   email?: string;
   pin: string; // The 4-digit hashed PIN
-  walletBalance: number;
+  wallet: number; // ✅ CHANGED: walletBalance → wallet (for Fapshi compatibility)
   createdAt: Date;
   updatedAt: Date;
 
@@ -51,7 +51,7 @@ const PassengerSchema: Schema<IPassenger> = new mongoose.Schema(
       type: String,
       required: false,
       unique: true,
-      sparse: true, 
+      sparse: true,
       trim: true,
       lowercase: true,
       match: [/.+\@.+\..+/, 'Please enter a valid email address'],
@@ -60,10 +60,12 @@ const PassengerSchema: Schema<IPassenger> = new mongoose.Schema(
       type: String,
       required: [true, 'A 4-digit PIN is required'],
     },
-    walletBalance: {
+    // ✅ CHANGED: walletBalance → wallet
+    wallet: {
       type: Number,
       required: true,
-      default: 0, // Start with an empty wallet
+      default: 0, // Start with an empty wallet (0 XAF)
+      min: [0, 'Wallet cannot be negative'],
     },
   },
   {
