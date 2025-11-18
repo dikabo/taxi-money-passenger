@@ -73,7 +73,7 @@ export function RechargeForm({ setOpen }: RechargeFormProps) {
       // - Phone prefix stripping
       // - Method to medium mapping
       // - externalId generation
-      const response = await fetch('/api/payments/recharge', {
+      const response = await fetch('/api/payments/recharge/route.ts', {
         method: 'POST',
         headers: { 
           'Content-Type': 'application/json',
