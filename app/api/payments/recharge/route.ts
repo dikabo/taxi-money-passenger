@@ -101,9 +101,11 @@ export async function POST(req: NextRequest) {
     console.log('[API] Calling Fapshi Direct Pay...');
 
     const fapshiApiKey = process.env.FAPSHI_API_KEY;
-    if (!fapshiApiKey) {
-      throw new Error('FAPSHI_API_KEY not configured');
-    }
+    const fapshiApiUser = process.env.FAPSHI_API_USER; // You need this new variable
+
+    if (!fapshiApiKey || !fapshiApiUser) {
+      throw new Error('Fapshi credentials (API_KEY and API_USER) not configured');
+    }
 
     try {
       // FIXED: Updated to use Direct Pay endpoint with correct parameters
@@ -112,9 +114,10 @@ export async function POST(req: NextRequest) {
         {
           method: 'POST',
           headers: {
-            'Authorization': `Bearer ${fapshiApiKey}`,
-            'Content-Type': 'application/json',
-          },
+            'apikey': fapshiApiKey,
+            'apiuser': fapshiApiUser,
+            'Content-Type': 'application/json',
+          },
           body: JSON.stringify({
             amount: amountAsNumber,
             phone: phoneWithoutPrefix, // FIXED: Without +237 prefix
