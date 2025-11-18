@@ -91,7 +91,7 @@ export async function POST(req: NextRequest) {
 
     // 7. Send OTP (by logging in with the Cookie Client)
     // This is our test harness using the test number
-    if (phoneNumber !== '+237688888888') {
+    if (phoneNumber !== '688888888') {
       const supabaseCookieClient = createCookieServerClient(cookieStore);
       const { error: otpError } = await supabaseCookieClient.auth.signInWithPassword({
         phone: phoneNumber,
