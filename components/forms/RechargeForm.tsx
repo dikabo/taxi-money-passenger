@@ -177,13 +177,13 @@ export function RechargeForm({ setOpen }: RechargeFormProps) {
                   <FormLabel>Numéro de téléphone ({selectedMethod})</FormLabel>
                   <FormControl>
                     <Input
-                      placeholder="+237XXXXXXXXX"
+                      placeholder="6XXXXXXXX"
                       {...field}
                       className="bg-gray-800 border-gray-700"
                     />
                   </FormControl>
                   <FormDescription>
-                    Le numéro {selectedMethod} qui sera débité. Format: +237XXXXXXXXX
+                    Le numéro {selectedMethod} qui sera débité. Format: 6XXXXXXXX
                   </FormDescription>
                   <FormMessage />
                 </FormItem>
