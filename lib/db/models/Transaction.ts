@@ -32,7 +32,7 @@ const TransactionSchema: Schema<ITransaction> = new mongoose.Schema(
     userId: {
       type: mongoose.Schema.Types.ObjectId,
       required: true,
-      ref: 'Passenger', // ✅ CHANGED: 'Driver' → 'Passenger' (for Fapshi recharges)
+      ref: 'Passenger', 
       index: true,
     },
     userType: {

@@ -7,6 +7,7 @@ import { PayDriverForm } from '@/components/forms/PayDriverForm';
 /**
  * File: /app/(dashboard)/pay/page.tsx
  * Purpose: The main "Pay" page with Scan/ID tabs.
+ * CHANGED: XAF references → Units
  */
 
 export const metadata: Metadata = {
@@ -49,7 +50,6 @@ export default function PayPage() {
               <CardTitle>Payer par ID Chauffeur</CardTitle>
             </CardHeader>
             <CardContent>
-              {/* We will create this form next */}
               <PayDriverForm />
             </CardContent>
           </Card>

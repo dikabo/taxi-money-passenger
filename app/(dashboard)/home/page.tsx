@@ -14,21 +14,16 @@ import { HistoryModal } from '@/components/dashboard/HistoryModal';
 /**
  * File: /app/(dashboard)/home/page.tsx
  * Purpose: The main passenger dashboard.
- *
- * FIXED: Moved RechargeModal outside Card to prevent DOM reconciliation issues
+ * CHANGED: XAF → Units for display
  */
 
 export const metadata: Metadata = {
   title: 'Accueil | Taxi Money',
 };
 
-// Helper function to format currency
-function formatCurrency(amount: number) {
-  return new Intl.NumberFormat('fr-CM', {
-    style: 'currency',
-    currency: 'XAF',
-    minimumFractionDigits: 0,
-  }).format(amount);
+// Helper function to format currency (display as Units)
+function formatUnits(amount: number) {
+  return `${amount.toLocaleString('fr-CM')} Units`;
 }
 
 // Pattern to get data
@@ -36,20 +31,17 @@ async function getPassengerData() {
   const cookieStore = await cookies();
   const supabase = createCookieServerClient(cookieStore);
 
-  // Get the current user session
   const { data: { session } } = await supabase.auth.getSession();
   if (!session) {
     return redirect('/signup');
   }
 
-  // Get the passenger profile from MongoDB
   await dbConnect();
   const passenger = await Passenger.findOne({ authId: session.user.id });
   if (!passenger) {
     return redirect('/signup');
   }
   
-  // TODO: Fetch real transaction data
   const lastTransaction = {
     type: 'Paiement au Chauffeur',
     amount: 150,
@@ -76,13 +68,13 @@ export default async function HomePage() {
         </div>
       </div>
 
-      {/* Wallet Balance Card */}
+      {/* Wallet Balance Card - CHANGED: XAF → Units */}
       <Card className="bg-gray-900 border-gray-800 text-white">
         <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
           <CardTitle className="text-sm font-medium">Solde de votre portefeuille</CardTitle>
         </CardHeader>
         <CardContent>
-          <div className="text-3xl font-bold">{formatCurrency(WalletBalance)}</div>
+          <div className="text-3xl font-bold">{formatUnits(WalletBalance)}</div>
         </CardContent>
       </Card>
 
@@ -124,7 +116,7 @@ export default async function HomePage() {
                 </div>
               </div>
               <div className="text-lg font-bold text-red-400">
-                -{formatCurrency(lastTransaction.amount)}
+                -{formatUnits(lastTransaction.amount)}
               </div>
             </div>
           </CardContent>

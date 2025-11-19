@@ -29,16 +29,8 @@ import { Loader2 } from 'lucide-react';
 
 /**
  * File: /components/forms/RechargeForm.tsx
- * Purpose: Form for recharging passenger wallet via Fapshi.
- *
- * Features:
- * - Validates amount (100 - 5,000 XAF)
- * - Conditional phone input based on selected method
- * - Displays transaction ID on success
- * - Proper error handling and loading states
- * - Uses Fapshi webhook for balance updates
- *
- * FIXED: Send data in the exact format the backend expects
+ * Purpose: Form for recharging passenger wallet via Fapshi
+ * CHANGED: XAF → Units in labels
  */
 
 type RechargeFormValues = z.infer<typeof rechargeSchema>;
@@ -60,28 +52,21 @@ export function RechargeForm({ setOpen }: RechargeFormProps) {
     },
   });
 
-  // Watch method field to conditionally show phone input
   const selectedMethod = form.watch('method');
 
   const onSubmit: SubmitHandler<RechargeFormValues> = async (values) => {
     setIsLoading(true);
 
     try {
-      // FIXED: Send the exact same data structure from the form
-      // Backend validates and processes it
-      // NO need to transform here - backend handles:
-      // - Phone prefix stripping
-      // - Method to medium mapping
-      // - externalId generation
       const response = await fetch('/api/payments/recharge', {
         method: 'POST',
         headers: { 
           'Content-Type': 'application/json',
         },
         body: JSON.stringify({
-          amount: values.amount, // String from form (e.g., "1000")
-          method: values.method, // String (e.g., "MTN" or "Orange")
-          rechargePhoneNumber: values.rechargePhoneNumber, // String (e.g., "671234567")
+          amount: values.amount,
+          method: values.method,
+          rechargePhoneNumber: values.rechargePhoneNumber,
         }),
       });
 
@@ -91,18 +76,16 @@ export function RechargeForm({ setOpen }: RechargeFormProps) {
         throw new Error(result.error || 'Une erreur inconnue est survenue');
       }
 
-      // Success: Show transaction ID and instructions
       const transactionId = result.transId || result.transactionId;
       const phoneDisplay = values.rechargePhoneNumber;
 
       sonnerToast.success('Rechargement initié!', {
-        description: `Transaction ID: ${transactionId}\n\nVeuillez confirmer la transaction de ${values.amount} XAF sur le ${phoneDisplay}. Vous recevrez un USSD pour valider.`,
+        description: `Transaction ID: ${transactionId}\n\nVeuillez confirmer la transaction de ${values.amount} Units sur le ${phoneDisplay}. Vous recevrez un USSD pour valider.`,
       });
 
       setIsLoading(false);
       setOpen(false);
       form.reset();
-      // Balance will update when Fapshi webhook is received
 
     } catch (error) {
       let errorMessage = 'Une erreur inattendue est survenue.';
@@ -120,13 +103,13 @@ export function RechargeForm({ setOpen }: RechargeFormProps) {
     <Form {...form}>
       <form onSubmit={form.handleSubmit(onSubmit)} className="space-y-6">
 
-        {/* Amount Field */}
+        {/* Amount Field - CHANGED: XAF → Units */}
         <FormField
           control={form.control}
           name="amount"
           render={({ field }) => (
             <FormItem>
-              <FormLabel>Montant (XAF)</FormLabel>
+              <FormLabel>Montant (Units)</FormLabel>
               <FormControl>
                 <Input
                   type="number"
@@ -136,7 +119,7 @@ export function RechargeForm({ setOpen }: RechargeFormProps) {
                 />
               </FormControl>
               <FormDescription>
-                Montant minimum: 100 XAF | Maximum: 5,000 XAF
+                Montant minimum: 100 Units | Maximum: 5,000 Units
               </FormDescription>
               <FormMessage />
             </FormItem>
