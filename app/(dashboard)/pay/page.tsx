@@ -6,8 +6,12 @@ import { PayDriverForm } from '@/components/forms/PayDriverForm';
 
 /**
  * File: /app/(dashboard)/pay/page.tsx
- * Purpose: The main "Pay" page with Scan/ID tabs.
- * CHANGED: XAF references → Units
+ * Purpose: Passenger pay page with QR scanning and ID entry
+ * 
+ * FEATURES:
+ * - QR Code scanner tab (placeholder - requires camera API)
+ * - ID entry tab (using PayDriverForm)
+ * - Units display throughout
  */
 
 export const metadata: Metadata = {
@@ -31,13 +35,18 @@ export default function PayPage() {
           </TabsTrigger>
         </TabsList>
         
-        {/* Scan QR Tab */}
+        {/* Scan QR Tab - Placeholder */}
         <TabsContent value="scan">
-          <Card className="bg-card bg-gray-900 border-gray-800">
+          <Card className="bg-gray-900 border-gray-800 text-white">
             <CardContent className="pt-6">
-              <div className="flex flex-col items-center justify-center h-48">
+              <div className="flex flex-col items-center justify-center h-48 space-y-4">
                 <ScanLine className="h-16 w-16 text-gray-500" />
-                <p className="text-gray-400 mt-4">Fonctionnalité de scan bientôt disponible.</p>
+                <p className="text-gray-400 text-center">
+                  Fonctionnalité de scan bientôt disponible.
+                </p>
+                <p className="text-sm text-gray-500 text-center max-w-xs">
+                  Utilisez l&apos;onglet &quot;Entrer ID&quot; pour payer en saisissant l&apos;ID du chauffeur
+                </p>
               </div>
             </CardContent>
           </Card>
@@ -45,7 +54,7 @@ export default function PayPage() {
         
         {/* Enter ID Tab */}
         <TabsContent value="id">
-          <Card className="bg-card bg-gray-900 border-gray-800">
+          <Card className="bg-gray-900 border-gray-800 text-white">
             <CardHeader>
               <CardTitle>Payer par ID Chauffeur</CardTitle>
             </CardHeader>
