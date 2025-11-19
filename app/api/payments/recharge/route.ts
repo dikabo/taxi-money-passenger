@@ -1,3 +1,8 @@
+// ============================================================================
+// FILE: /app/api/payments/recharge/route.ts
+// FINAL VERSION: Using CORRECT Fapshi headers (apikey and apiuser)
+// ============================================================================
+
 import { NextRequest, NextResponse } from 'next/server';
 import { cookies } from 'next/headers';
 import { z } from 'zod';
@@ -8,19 +13,11 @@ import Passenger from '@/lib/db/models/Passenger';
 import Transaction, { ITransaction } from '@/lib/db/models/Transaction';
 
 /**
- * File: /app/api/payments/recharge/route.ts
- * Purpose: API endpoint to INITIATE a wallet recharge request via Fapshi Direct Pay.
- *
- * Flow:
- * 1. Authenticate user via Supabase
- * 2. Validate recharge request data
- * 3. Check passenger exists
- * 4. Create PENDING transaction in MongoDB
- * 5. Call Fapshi Direct Pay API
- * 6. Update transaction with Fapshi transaction ID on success
- * 7. Return response to client
- *
- * FIXED: Properly type passenger._id to avoid TypeScript errors
+ * IMPORTANT: Fapshi Direct Pay API uses TWO headers:
+ * - apikey: Your API key (FAK_...)
+ * - apiuser: Your API user (same as apikey typically)
+ * 
+ * NOT Bearer token authentication
  */
 
 export async function POST(req: NextRequest) {
@@ -49,10 +46,10 @@ export async function POST(req: NextRequest) {
     const { amount, method, rechargePhoneNumber } = validation.data;
     const amountAsNumber = Number(amount);
 
-    // FIXED: Strip +237 prefix from phone number (Fapshi expects 67XXXXXXX format)
+    // Strip +237 prefix from phone number
     const phoneWithoutPrefix = rechargePhoneNumber.replace(/^\+237/, '');
 
-    // FIXED: Map method to Fapshi medium format
+    // Map method to Fapshi medium format
     const mediumMap: { [key: string]: string } = {
       'MTN': 'mobile money',
       'Orange': 'orange money',
@@ -67,26 +64,24 @@ export async function POST(req: NextRequest) {
       return NextResponse.json({ error: 'Passager non trouvé' }, { status: 404 });
     }
 
-    // FIXED: Explicitly cast passenger._id to string to avoid TypeScript 'unknown' error
     const passengerId = passenger._id?.toString();
-    
+
     if (!passengerId) {
       return NextResponse.json({ error: 'Passenger ID invalid' }, { status: 400 });
     }
 
-    // 4. Create PENDING Transaction with externalId for webhook mapping
-    // ✅ Properly typed and casted
+    // 4. Create PENDING Transaction
     const externalId = `recharge-${Date.now()}-${passengerId}`;
 
     const transaction = (await Transaction.create({
-      userId: passenger._id, // MongoDB automatically handles ObjectId
+      userId: passenger._id,
       userType: 'Passenger',
       type: 'Recharge',
       status: 'Pending',
-      amount: amountAsNumber, // Recharge is positive
+      amount: amountAsNumber,
       method: method,
       phoneNumber: rechargePhoneNumber,
-      externalId: externalId, // FIXED: Added for webhook mapping
+      externalId: externalId,
     })) as ITransaction;
 
     const transactionId = transaction._id?.toString() || '';
@@ -94,36 +89,36 @@ export async function POST(req: NextRequest) {
     console.log(`[API] Created PENDING transaction: ${transactionId}`);
     console.log(`[API] ExternalId: ${externalId}`);
     console.log(`[API] Amount: ${amountAsNumber} XAF`);
-    console.log(`[API] Phone: ${phoneWithoutPrefix} (stripped from ${rechargePhoneNumber})`);
+    console.log(`[API] Phone: ${phoneWithoutPrefix}`);
     console.log(`[API] Medium: ${paymentMedium}`);
 
     // 5. Call Fapshi Direct Pay API
     console.log('[API] Calling Fapshi Direct Pay...');
 
     const fapshiApiKey = process.env.FAPSHI_API_KEY;
-    const fapshiApiUser = process.env.FAPSHI_API_USER; // You need this new variable
+    const fapshiApiUser = process.env.FAPSHI_API_USER;
 
-    if (!fapshiApiKey || !fapshiApiUser) {
-      throw new Error('Fapshi credentials (API_KEY and API_USER) not configured');
-    }
+    if (!fapshiApiKey || !fapshiApiUser) {
+      throw new Error('FAPSHI_API_KEY and FAPSHI_API_USER must be configured');
+    }
 
     try {
-      // FIXED: Updated to use Direct Pay endpoint with correct parameters
+      // ✅ CORRECT: Use apikey and apiuser headers (NOT Bearer token)
       const fapshiResponse = await fetch(
         'https://api.fapshi.com/direct-pay',
         {
           method: 'POST',
           headers: {
-            'apikey': fapshiApiKey,
-            'apiuser': fapshiApiUser,
-            'Content-Type': 'application/json',
-          },
+            'apikey': fapshiApiKey,        // ✅ CORRECT
+            'apiuser': fapshiApiUser,      // ✅ CORRECT
+            'Content-Type': 'application/json',
+          },
           body: JSON.stringify({
             amount: amountAsNumber,
-            phone: phoneWithoutPrefix, // FIXED: Without +237 prefix
-            medium: paymentMedium, // FIXED: Use "mobile money" or "orange money"
-            externalId: externalId, // FIXED: For webhook mapping and reconciliation
-            userId: passengerId, // FIXED: Use properly typed passengerId
+            phone: phoneWithoutPrefix,
+            medium: paymentMedium,
+            externalId: externalId,
+            userId: passengerId,
             message: 'Wallet recharge for transportation service',
           }),
         }
@@ -132,13 +127,15 @@ export async function POST(req: NextRequest) {
       const fapshiResult = await fapshiResponse.json();
 
       if (!fapshiResponse.ok) {
-        console.error('[API] Fapshi error response:', fapshiResult);
+        console.error('[API] Fapshi error response:', {
+          status: fapshiResponse.status,
+          body: fapshiResult,
+        });
         await Transaction.findByIdAndUpdate(transactionId, { status: 'Failed' });
-        throw new Error(fapshiResult.message || 'Fapshi API returned error');
+        throw new Error(fapshiResult.message || `Fapshi API error: ${fapshiResponse.status}`);
       }
 
       // 6. Update transaction with Fapshi transaction ID
-      // FIXED: Use correct field name 'transId' (not 'transaction_id')
       const fapshiTransactionId = fapshiResult.transId;
 
       await Transaction.findByIdAndUpdate(transactionId, {
@@ -152,7 +149,7 @@ export async function POST(req: NextRequest) {
         {
           success: true,
           message: 'Demande de rechargement initiée. Veuillez valider sur votre téléphone.',
-          transId: fapshiTransactionId, // Return Fapshi transaction ID to frontend
+          transId: fapshiTransactionId,
           transactionId: transactionId,
         },
         { status: 200 }

@@ -56,7 +56,7 @@ export function RechargeForm({ setOpen }: RechargeFormProps) {
     defaultValues: {
       amount: '',
       method: undefined,
-      rechargePhoneNumber: '699123456',
+      rechargePhoneNumber: '',
     },
   });
 
