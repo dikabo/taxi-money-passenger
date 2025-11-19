@@ -7,18 +7,10 @@ import dbConnect from '@/lib/db/mongoose-connection';
 import Passenger from '@/lib/db/models/Passenger';
 import Transaction, { ITransaction } from '@/lib/db/models/Transaction';
 
-/**
- * CRITICAL FIX: Auto-detect Fapshi environment from API key
- * FAK_test_... → Use sandbox.fapshi.com
- * FAK_live_... → Use live.fapshi.com (or api.fapshi.com)
- */
-
 export async function POST(req: NextRequest) {
   const cookieStore = await cookies();
 
   try {
-    console.log('[RECHARGE] ===== REQUEST START =====');
-
     // 1. Authentication
     const supabase = createCookieServerClient(cookieStore);
     const { data: { session } } = await supabase.auth.getSession();
@@ -83,20 +75,19 @@ export async function POST(req: NextRequest) {
     const fapshiApiUser = process.env.FAPSHI_API_USER;
 
     if (!fapshiApiKey || !fapshiApiUser) {
-      throw new Error('FAPSHI_API_KEY and FAPSHI_API_USER must be configured');
+      return NextResponse.json(
+        { error: 'Fapshi credentials not configured on server' },
+        { status: 500 }
+      );
     }
 
-    // CRITICAL: Auto-detect environment from API key
+    // Auto-detect environment
     const isSandbox = fapshiApiKey.includes('test') || fapshiApiKey.includes('TEST');
     const fapshiBaseUrl = isSandbox 
       ? 'https://sandbox.fapshi.com'
       : 'https://live.fapshi.com';
 
     const fapshiEndpoint = `${fapshiBaseUrl}/direct-pay`;
-
-    console.log('[RECHARGE] Fapshi Environment:', isSandbox ? 'SANDBOX' : 'LIVE');
-    console.log('[RECHARGE] Fapshi Endpoint:', fapshiEndpoint);
-    console.log('[RECHARGE] API Key starts with:', fapshiApiKey.substring(0, 15) + '...');
 
     const requestBody = {
       amount: amountAsNumber,
@@ -106,8 +97,6 @@ export async function POST(req: NextRequest) {
       userId: passengerId,
       message: 'Wallet recharge for transportation service',
     };
-
-    console.log('[RECHARGE] Request body:', JSON.stringify(requestBody));
 
     const fapshiResponse = await fetch(fapshiEndpoint, {
       method: 'POST',
@@ -119,23 +108,33 @@ export async function POST(req: NextRequest) {
       body: JSON.stringify(requestBody),
     });
 
-    console.log('[RECHARGE] Fapshi response status:', fapshiResponse.status);
-
     const responseText = await fapshiResponse.text();
-    console.log('[RECHARGE] Fapshi raw response:', responseText.substring(0, 500));
 
     let fapshiResult;
     try {
       fapshiResult = JSON.parse(responseText);
     } catch (parseError) {
-      console.log('[RECHARGE] ❌ Failed to parse Fapshi response as JSON');
-      throw new Error(`Invalid response from Fapshi: ${responseText.substring(0, 100)}`);
+      // Return detailed error for debugging
+      return NextResponse.json(
+        { 
+          error: 'Invalid response from Fapshi',
+          details: responseText.substring(0, 200),
+          status: fapshiResponse.status,
+        },
+        { status: 500 }
+      );
     }
 
     if (!fapshiResponse.ok) {
-      console.log('[RECHARGE] ❌ Fapshi error:', fapshiResult);
       await Transaction.findByIdAndUpdate(transactionId, { status: 'Failed' });
-      throw new Error(fapshiResult.message || `Fapshi error: ${fapshiResponse.status}`);
+      return NextResponse.json(
+        { 
+          error: fapshiResult.message || 'Fapshi API error',
+          details: fapshiResult,
+          httpStatus: fapshiResponse.status,
+        },
+        { status: 400 }
+      );
     }
 
     const fapshiTransactionId = fapshiResult.transId;
@@ -143,8 +142,6 @@ export async function POST(req: NextRequest) {
     await Transaction.findByIdAndUpdate(transactionId, {
       fapshiTransactionId: fapshiTransactionId,
     });
-
-    console.log('[RECHARGE] ✅ SUCCESS - Fapshi transId:', fapshiTransactionId);
 
     return NextResponse.json(
       {
@@ -157,18 +154,16 @@ export async function POST(req: NextRequest) {
     );
 
   } catch (error) {
-    console.error('[RECHARGE] ❌ ERROR:', error);
-
-    if (error instanceof z.ZodError) {
-      return NextResponse.json(
-        { error: 'Validation invalide', details: error.issues },
-        { status: 400 }
-      );
-    }
-
-    const errorMessage = error instanceof Error ? error.message : 'Une erreur inattendue est survenue';
+    // Return detailed error for debugging in production
+    const errorMessage = error instanceof Error ? error.message : 'Unknown error';
+    const errorName = error instanceof Error ? error.constructor.name : typeof error;
+    
     return NextResponse.json(
-      { error: errorMessage },
+      { 
+        error: errorMessage,
+        type: errorName,
+        timestamp: new Date().toISOString(),
+      },
       { status: 500 }
     );
   }
