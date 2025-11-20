@@ -1,39 +1,23 @@
-'use client';
-
-import { useEffect } from 'react';
-import { useRouter } from 'next/navigation';
-import { createBrowserClient } from '@supabase/ssr';
+import { cookies } from 'next/headers';
+import { redirect } from 'next/navigation';
+import { createCookieServerClient } from '@/lib/db/supabase-server';
 
 /**
  * File: /app/page.tsx
- * Purpose: Redirect to login or home based on auth status
+ * Purpose: Server-side redirect based on auth status
  * 
- * FIXED: Checks if user is authenticated before redirecting
- * - If authenticated → goes to /home
- * - If not authenticated → goes to /auth/login
+ * This prevents the empty page flash by doing server-side redirect
  */
 
-export default function RootPage() {
-  const router = useRouter();
+export default async function RootPage() {
+  const cookieStore = await cookies();
+  const supabase = createCookieServerClient(cookieStore);
 
-  useEffect(() => {
-    // Create Supabase client for client-side
-    const supabase = createBrowserClient(
-      process.env.NEXT_PUBLIC_SUPABASE_URL!,
-      process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!
-    );
+  const { data: { session } } = await supabase.auth.getSession();
 
-    // Check if user is authenticated
-    supabase.auth.getSession().then(({ data: { session } }) => {
-      if (session) {
-        // User is authenticated - go to home
-        router.push('/home');
-      } else {
-        // User is not authenticated - go to login
-        router.push('/auth/login');
-      }
-    });
-  }, [router]);
-
-  return null;
+  if (session) {
+    redirect('/home');
+  } else {
+    redirect('/login');
+  }
 }

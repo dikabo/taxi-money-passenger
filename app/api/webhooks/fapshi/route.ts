@@ -6,146 +6,271 @@ import Transaction from '@/lib/db/models/Transaction';
 /**
  * File: /app/api/webhooks/fapshi/route.ts
  * Purpose: Webhook API that Fapshi calls to notify transaction status.
- * This endpoint processes successful recharges/withdrawals and updates wallet balances.
- *
- * Flow:
- * 1. Extract transaction data from Fapshi payload
- * 2. Find corresponding transaction in DB using externalId
- * 3. Verify not already processed (idempotency check)
- * 4. Update wallet balance based on transaction status
- * 5. Mark transaction as Success/Failed
- * 6. Return 200 OK to Fapshi
- *
- * FIXED: Better logging and error handling for debugging
+ * 
+ * ✅ FIXED: Better logging, flexible status handling, and comprehensive error checking
  */
 
 export async function POST(req: NextRequest) {
   try {
+    // ============================================
+    // STEP 1: Log EVERYTHING about the request
+    // ============================================
     const body = await req.json();
 
     console.log('='.repeat(80));
-    console.log('[WEBHOOK] 📥 Received Fapshi webhook');
-    console.log('[WEBHOOK] Payload:', JSON.stringify(body, null, 2));
+    console.log('[WEBHOOK] 📥 FAPSHI WEBHOOK RECEIVED');
+    console.log('[WEBHOOK] Timestamp:', new Date().toISOString());
+    console.log('[WEBHOOK] Full payload:', JSON.stringify(body, null, 2));
+    console.log('[WEBHOOK] Headers:', JSON.stringify(Object.fromEntries(req.headers.entries()), null, 2));
     console.log('='.repeat(80));
 
-    // Extract Fapshi webhook payload
-    // Fapshi sends these fields (based on Direct Pay API docs):
-    const fapshiTransactionId = body.transId; // Fapshi's transaction ID
-    const externalId = body.externalId; // Our externalId sent in the request
+    // ============================================
+    // STEP 2: Extract webhook data with flexibility
+    // ============================================
+    // Fapshi might use different field names, so we check multiple possibilities
+    const fapshiTransactionId = body.transId || body.transactionId || body.trans_id || body.id;
+    const externalId = body.externalId || body.external_id || body.reference;
     const amount = body.amount;
-    const status = body.status; // e.g., "successful", "failed", "pending"
-    const phone = body.phone;
+    
+    // ✅ FIX: Handle different status values Fapshi might send
+    // Normalize status to lowercase for comparison
+    const rawStatus = body.status || body.transaction_status || body.state;
+    const normalizedStatus = rawStatus ? String(rawStatus).toLowerCase() : '';
+    
+    const phone = body.phone || body.phoneNumber || body.phone_number;
 
-    // Validate required fields
-    if (!externalId || !status) {
-      console.warn('[WEBHOOK] ⚠️ Invalid payload: missing externalId or status');
-      return NextResponse.json({ error: 'Invalid webhook payload' }, { status: 400 });
+    console.log('[WEBHOOK] 🔍 Extracted fields:');
+    console.log('[WEBHOOK]   - fapshiTransactionId:', fapshiTransactionId);
+    console.log('[WEBHOOK]   - externalId:', externalId);
+    console.log('[WEBHOOK]   - amount:', amount);
+    console.log('[WEBHOOK]   - rawStatus:', rawStatus);
+    console.log('[WEBHOOK]   - normalizedStatus:', normalizedStatus);
+    console.log('[WEBHOOK]   - phone:', phone);
+
+    // ============================================
+    // STEP 3: Validate required fields
+    // ============================================
+    if (!externalId) {
+      console.error('[WEBHOOK] ❌ ERROR: Missing externalId');
+      console.error('[WEBHOOK] Available body fields:', Object.keys(body));
+      return NextResponse.json({ 
+        error: 'Missing externalId',
+        received_fields: Object.keys(body),
+        tip: 'Check Fapshi webhook documentation for correct field names'
+      }, { status: 400 });
     }
 
-    console.log(`[WEBHOOK] 🔍 Looking for transaction with externalId: ${externalId}`);
+    if (!normalizedStatus) {
+      console.error('[WEBHOOK] ❌ ERROR: Missing status field');
+      return NextResponse.json({ 
+        error: 'Missing status',
+        received_fields: Object.keys(body)
+      }, { status: 400 });
+    }
 
-    // Connect to database
+    // ============================================
+    // STEP 4: Connect to database and find transaction
+    // ============================================
+    console.log(`[WEBHOOK] 🔍 Searching for transaction with externalId: ${externalId}`);
+    
     await dbConnect();
-
-    // Find transaction by externalId (this is how we map Fapshi response to our DB)
+    
     const transaction = await Transaction.findOne({
       externalId: externalId,
     });
 
     if (!transaction) {
-      console.warn(`[WEBHOOK] ❌ Transaction not found with externalId: ${externalId}`);
-      // Still return 200 to prevent Fapshi from retrying
-      return NextResponse.json({ error: 'Transaction not found' }, { status: 200 });
+      console.error(`[WEBHOOK] ❌ Transaction not found with externalId: ${externalId}`);
+      // Return 200 to prevent Fapshi from retrying (this might be a test or duplicate)
+      return NextResponse.json({ 
+        error: 'Transaction not found',
+        externalId: externalId,
+        tip: 'This transaction may have already been processed or does not exist'
+      }, { status: 200 });
     }
 
     console.log(`[WEBHOOK] ✅ Found transaction: ${transaction._id}`);
-    console.log(`[WEBHOOK] Current status: ${transaction.status}`);
-    console.log(`[WEBHOOK] Transaction amount: ${transaction.amount} XAF`);
+    console.log(`[WEBHOOK]    Current status: ${transaction.status}`);
+    console.log(`[WEBHOOK]    Transaction type: ${transaction.type}`);
+    console.log(`[WEBHOOK]    Transaction amount: ${transaction.amount} Units`);
+    console.log(`[WEBHOOK]    User ID: ${transaction.userId}`);
 
-    // Idempotency check - prevent duplicate processing
+    // ============================================
+    // STEP 5: Idempotency check
+    // ============================================
     if (transaction.status !== 'Pending') {
-      console.log(
-        `[WEBHOOK] ⚠️ Transaction ${transaction._id} already processed (status: ${transaction.status}). Ignoring duplicate.`
-      );
-      return NextResponse.json({ message: 'Webhook already processed' }, { status: 200 });
+      console.log(`[WEBHOOK] ⚠️ DUPLICATE: Transaction already processed`);
+      console.log(`[WEBHOOK]    Current status: ${transaction.status}`);
+      console.log(`[WEBHOOK]    Ignoring duplicate webhook call`);
+      
+      return NextResponse.json({ 
+        message: 'Webhook already processed',
+        transactionId: transaction._id,
+        currentStatus: transaction.status
+      }, { status: 200 });
     }
 
-    // Process based on Fapshi status
-    // Fapshi returns: "successful", "failed", or "pending"
-    if (status === 'successful') {
-      console.log(`[WEBHOOK] 💰 Processing successful payment`);
+    // ============================================
+    // STEP 6: Process based on status
+    // ============================================
+    // ✅ FIX: Handle multiple possible success status values
+    const isSuccess = [
+      'successful',
+      'success', 
+      'completed',
+      'approved',
+      'paid'
+    ].includes(normalizedStatus);
+
+    const isFailed = [
+      'failed',
+      'failure',
+      'declined',
+      'rejected',
+      'cancelled',
+      'canceled'
+    ].includes(normalizedStatus);
+
+    const isPending = [
+      'pending',
+      'processing',
+      'initiated',
+      'awaiting'
+    ].includes(normalizedStatus);
+
+    console.log('[WEBHOOK] 📊 Status check:');
+    console.log('[WEBHOOK]    isSuccess:', isSuccess);
+    console.log('[WEBHOOK]    isFailed:', isFailed);
+    console.log('[WEBHOOK]    isPending:', isPending);
+
+    // ============================================
+    // HANDLE SUCCESS
+    // ============================================
+    if (isSuccess) {
+      console.log('[WEBHOOK] 💰 Processing SUCCESSFUL payment');
       
-      // Add money to passenger's wallet
-      const passenger = await Passenger.findOneAndUpdate(
-        { _id: transaction.userId },
-        { $inc: { wallet: transaction.amount } },
-        { new: true }
-      );
-
-      if (!passenger) {
-        console.error(`[WEBHOOK] ❌ Passenger not found: ${transaction.userId}`);
-        throw new Error(
-          `Passenger not found during webhook processing: ${transaction.userId}`
+      try {
+        // Find and update passenger wallet
+        const passenger = await Passenger.findOneAndUpdate(
+          { _id: transaction.userId },
+          { $inc: { wallet: transaction.amount } },
+          { new: true }
         );
+
+        if (!passenger) {
+          console.error(`[WEBHOOK] ❌ Passenger not found: ${transaction.userId}`);
+          throw new Error(`Passenger not found: ${transaction.userId}`);
+        }
+
+        // Update transaction
+        transaction.status = 'Success';
+        transaction.fapshiTransactionId = fapshiTransactionId;
+        await transaction.save();
+
+        console.log('='.repeat(80));
+        console.log('[WEBHOOK] ✅ ✅ ✅ SUCCESS! ✅ ✅ ✅');
+        console.log('[WEBHOOK] Passenger:', passenger.firstName, passenger.lastName);
+        console.log('[WEBHOOK] Phone:', passenger.phoneNumber);
+        console.log('[WEBHOOK] Amount recharged:', transaction.amount, 'Units');
+        console.log('[WEBHOOK] Previous balance:', passenger.wallet - transaction.amount, 'Units');
+        console.log('[WEBHOOK] NEW BALANCE:', passenger.wallet, 'Units');
+        console.log('[WEBHOOK] Transaction ID:', transaction._id);
+        console.log('[WEBHOOK] Fapshi Transaction ID:', fapshiTransactionId);
+        console.log('='.repeat(80));
+
+        return NextResponse.json({
+          success: true,
+          message: 'Payment processed successfully',
+          transactionId: transaction._id,
+          status: 'Success',
+          newBalance: passenger.wallet
+        }, { status: 200 });
+        
+      } catch (updateError) {
+        console.error('[WEBHOOK] ❌ Error updating wallet:', updateError);
+        // Don't update transaction status on error
+        throw updateError;
       }
+    }
 
-      // Update transaction with success status
-      transaction.status = 'Success';
-      transaction.fapshiTransactionId = fapshiTransactionId;
-      await transaction.save();
-
-      console.log('='.repeat(80));
-      console.log(`[WEBHOOK] ✅ SUCCESS!`);
-      console.log(`[WEBHOOK] Passenger: ${passenger.firstName} ${passenger.lastName}`);
-      console.log(`[WEBHOOK] Amount recharged: ${transaction.amount} Units`);
-      console.log(`[WEBHOOK] Old balance: ${passenger.wallet - transaction.amount} Units`);
-      console.log(`[WEBHOOK] New balance: ${passenger.wallet} Units`);
-      console.log(`[WEBHOOK] Transaction ID: ${transaction._id}`);
-      console.log(`[WEBHOOK] Fapshi Transaction ID: ${fapshiTransactionId}`);
-      console.log('='.repeat(80));
-
-    } else if (status === 'failed') {
-      // Payment failed at Fapshi - mark transaction as failed
+    // ============================================
+    // HANDLE FAILURE
+    // ============================================
+    if (isFailed) {
+      console.log('[WEBHOOK] ❌ Processing FAILED payment');
+      
       transaction.status = 'Failed';
       transaction.fapshiTransactionId = fapshiTransactionId;
       await transaction.save();
 
       console.log('='.repeat(80));
-      console.log(`[WEBHOOK] ❌ FAILED`);
-      console.log(`[WEBHOOK] User ID: ${transaction.userId}`);
-      console.log(`[WEBHOOK] Amount: ${transaction.amount} Units`);
-      console.log(`[WEBHOOK] Reason: Payment failed at Fapshi`);
+      console.log('[WEBHOOK] ❌ PAYMENT FAILED');
+      console.log('[WEBHOOK] User ID:', transaction.userId);
+      console.log('[WEBHOOK] Amount:', transaction.amount, 'Units');
+      console.log('[WEBHOOK] Reason:', body.message || body.error || 'Payment failed at Fapshi');
+      console.log('[WEBHOOK] Transaction marked as Failed');
       console.log('='.repeat(80));
 
-    } else if (status === 'pending') {
-      // Still waiting for confirmation
-      console.log(`[WEBHOOK] ⏳ PENDING: Transaction ${transaction._id} still waiting`);
-      // Don't update status yet, still Pending
-    } else {
-      console.warn(`[WEBHOOK] ⚠️ Unknown status: ${status}`);
+      return NextResponse.json({
+        success: false,
+        message: 'Payment failed',
+        transactionId: transaction._id,
+        status: 'Failed'
+      }, { status: 200 });
     }
 
-    // Acknowledge receipt to Fapshi
-    return NextResponse.json(
-      {
+    // ============================================
+    // HANDLE PENDING
+    // ============================================
+    if (isPending) {
+      console.log('[WEBHOOK] ⏳ Payment still PENDING');
+      console.log('[WEBHOOK] Transaction:', transaction._id);
+      console.log('[WEBHOOK] Waiting for final status...');
+      
+      // Don't update status, keep as Pending
+      return NextResponse.json({
         success: true,
-        message: 'Webhook received and processed',
+        message: 'Payment still pending',
         transactionId: transaction._id,
-        status: transaction.status,
-      },
-      { status: 200 }
-    );
+        status: 'Pending'
+      }, { status: 200 });
+    }
+
+    // ============================================
+    // HANDLE UNKNOWN STATUS
+    // ============================================
+    console.warn('[WEBHOOK] ⚠️ UNKNOWN STATUS:', normalizedStatus);
+    console.warn('[WEBHOOK] Raw status:', rawStatus);
+    console.warn('[WEBHOOK] This status is not recognized!');
+    console.warn('[WEBHOOK] Transaction will remain Pending');
+    
+    return NextResponse.json({
+      success: false,
+      message: 'Unknown payment status',
+      receivedStatus: rawStatus,
+      transactionId: transaction._id,
+      tip: 'Contact Fapshi support to clarify webhook status values'
+    }, { status: 200 });
 
   } catch (error) {
+    // ============================================
+    // ERROR HANDLING
+    // ============================================
     console.error('='.repeat(80));
-    console.error('[WEBHOOK] ❌ ERROR');
+    console.error('[WEBHOOK] ❌ CRITICAL ERROR');
     console.error('[WEBHOOK] Error:', error);
-    console.error('[WEBHOOK] Stack:', error instanceof Error ? error.stack : 'No stack trace');
+    console.error('[WEBHOOK] Error name:', error instanceof Error ? error.name : typeof error);
+    console.error('[WEBHOOK] Error message:', error instanceof Error ? error.message : String(error));
+    console.error('[WEBHOOK] Stack trace:', error instanceof Error ? error.stack : 'No stack trace');
     console.error('='.repeat(80));
 
-    // Always return 500 on server error (Fapshi will retry)
+    // Return 500 so Fapshi will retry
     return NextResponse.json(
-      { error: 'An unexpected error occurred' },
+      { 
+        error: 'Internal server error',
+        message: error instanceof Error ? error.message : 'Unknown error',
+        timestamp: new Date().toISOString()
+      },
       { status: 500 }
     );
   }
