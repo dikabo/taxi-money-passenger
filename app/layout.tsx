@@ -3,8 +3,8 @@ import { Inter } from 'next/font/google';
 import './globals.css';
 import { Providers } from './providers';
 import { cn } from '@/lib/utils/cn';
+import { Suspense } from 'react';
 
-// Setup the Inter font
 const fontSans = Inter({
   subsets: ['latin'],
   variable: '--font-sans',
@@ -16,7 +16,7 @@ export const metadata: Metadata = {
 };
 
 export const viewport: Viewport = {
-  themeColor: '#0A0A0A', // A dark theme for the passenger app
+  themeColor: '#0A0A0A',
 };
 
 export default function RootLayout({
@@ -32,7 +32,9 @@ export default function RootLayout({
           fontSans.variable
         )}
       >
-        <Providers>{children}</Providers>
+        <Suspense fallback={<div className="min-h-screen bg-black" />}>
+          <Providers>{children}</Providers>
+        </Suspense>
       </body>
     </html>
   );
