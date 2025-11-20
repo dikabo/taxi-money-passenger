@@ -46,13 +46,13 @@ async function getPassengerData() {
 
   const { data: { session } } = await supabase.auth.getSession();
   if (!session) {
-    return redirect('/signup');
+    return redirect('/login');
   }
 
   await dbConnect();
   const passenger = await Passenger.findOne({ authId: session.user.id });
   if (!passenger) {
-    return redirect('/signup');
+    return redirect('/login');
   }
   
   // ✅ FIXED: Fetch real last transaction from database

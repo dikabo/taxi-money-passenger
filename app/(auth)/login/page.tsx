@@ -5,7 +5,6 @@ import { useRouter } from 'next/navigation';
 import { useForm, SubmitHandler } from 'react-hook-form';
 import { zodResolver } from '@hookform/resolvers/zod';
 import { z } from 'zod';
-import { pinLoginSchema } from '@/lib/validations/passenger-auth';
 import { Button } from '@/components/ui/button';
 import {
   Form,
@@ -16,31 +15,41 @@ import {
   FormLabel,
   FormMessage,
 } from '@/components/ui/form';
-import {
-  InputOTP,
-  InputOTPGroup,
-  InputOTPSlot,
-} from '@/components/ui/input-otp';
+import { Input } from '@/components/ui/input';
 import { toast as sonnerToast } from 'sonner';
-import { Loader2 } from 'lucide-react';
+import { Loader2, Phone } from 'lucide-react';
 import Link from 'next/link';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 
 /**
  * File: /app/(auth)/login/page.tsx
- * Purpose: PIN-based login page for existing passengers
+ * Purpose: Phone number-based login page for existing passengers
+ * ✅ FIXED: Changed from PIN to phone number + OTP verification
+ * 
+ * Flow:
+ * 1. User enters phone number
+ * 2. System sends OTP to phone
+ * 3. User is redirected to /verify-otp page
  */
 
-type LoginFormValues = z.infer<typeof pinLoginSchema>;
+const cameroonPhoneRegex = /^\+237[6-8]\d{8}$/;
+
+const phoneLoginSchema = z.object({
+  phoneNumber: z.string().regex(cameroonPhoneRegex, {
+    message: 'Le numéro doit être au format +237XXXXXXXXX',
+  }),
+});
+
+type LoginFormValues = z.infer<typeof phoneLoginSchema>;
 
 export default function LoginPage() {
   const router = useRouter();
   const [isLoading, setIsLoading] = useState(false);
 
   const form = useForm<LoginFormValues>({
-    resolver: zodResolver(pinLoginSchema),
+    resolver: zodResolver(phoneLoginSchema),
     defaultValues: {
-      pin: '',
+      phoneNumber: '+237',
     },
   });
 
@@ -48,23 +57,39 @@ export default function LoginPage() {
     setIsLoading(true);
 
     try {
-      const response = await fetch('/api/auth/login', {
+      // Check if passenger exists with this phone number
+      const checkResponse = await fetch('/api/auth/check-phone', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(values),
+        body: JSON.stringify({ phoneNumber: values.phoneNumber }),
       });
 
-      const result = await response.json();
+      const checkResult = await checkResponse.json();
 
-      if (!response.ok) {
-        throw new Error(result.error || 'Connexion échouée');
+      if (!checkResponse.ok) {
+        throw new Error(checkResult.error || 'Numéro de téléphone non trouvé');
       }
 
-      sonnerToast.success('Connexion réussie!', {
-        description: 'Bienvenue!',
+      // Send OTP
+      const otpResponse = await fetch('/api/auth/send-otp', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ phoneNumber: values.phoneNumber }),
       });
 
-      router.push('/home');
+      const otpResult = await otpResponse.json();
+
+      if (!otpResponse.ok) {
+        throw new Error(otpResult.error || 'Échec de l\'envoi de l\'OTP');
+      }
+
+      sonnerToast.success('OTP envoyé!', {
+        description: 'Vérifiez votre téléphone pour le code.',
+      });
+
+      // Redirect to OTP verification page
+      router.push(`/verify-otp?phone=${encodeURIComponent(values.phoneNumber)}&type=login`);
+      
     } catch (error) {
       let errorMessage = 'Une erreur inattendue est survenue.';
       if (error instanceof Error) {
@@ -84,7 +109,7 @@ export default function LoginPage() {
         <CardHeader className="space-y-2 text-center">
           <CardTitle className="text-2xl">Connexion</CardTitle>
           <CardDescription>
-            Entrez votre code PIN à 4 chiffres
+            Entrez votre numéro de téléphone pour recevoir un code OTP
           </CardDescription>
         </CardHeader>
         <CardContent>
@@ -92,22 +117,23 @@ export default function LoginPage() {
             <form onSubmit={form.handleSubmit(onSubmit)} className="space-y-6">
               <FormField
                 control={form.control}
-                name="pin"
+                name="phoneNumber"
                 render={({ field }) => (
                   <FormItem>
-                    <FormLabel>Code PIN</FormLabel>
+                    <FormLabel>Numéro de téléphone</FormLabel>
                     <FormControl>
-                      <InputOTP maxLength={4} {...field} containerClassName="justify-center">
-                        <InputOTPGroup className="text-white">
-                          <InputOTPSlot index={0} className="bg-gray-800 border-gray-700" />
-                          <InputOTPSlot index={1} className="bg-gray-800 border-gray-700" />
-                          <InputOTPSlot index={2} className="bg-gray-800 border-gray-700" />
-                          <InputOTPSlot index={3} className="bg-gray-800 border-gray-700" />
-                        </InputOTPGroup>
-                      </InputOTP>
+                      <div className="relative">
+                        <Phone className="absolute left-3 top-3 h-5 w-5 text-gray-400" />
+                        <Input
+                          {...field}
+                          placeholder="+237600000000"
+                          className="pl-10 bg-gray-800 border-gray-700 text-white"
+                          type="tel"
+                        />
+                      </div>
                     </FormControl>
                     <FormDescription>
-                      Votre code PIN personnel
+                      Le numéro utilisé lors de l&apos;inscription
                     </FormDescription>
                     <FormMessage />
                   </FormItem>
@@ -118,10 +144,10 @@ export default function LoginPage() {
                 {isLoading ? (
                   <>
                     <Loader2 className="mr-2 h-4 w-4 animate-spin" />
-                    Connexion en cours...
+                    Envoi en cours...
                   </>
                 ) : (
-                  'Se Connecter'
+                  'Recevoir le code OTP'
                 )}
               </Button>
             </form>

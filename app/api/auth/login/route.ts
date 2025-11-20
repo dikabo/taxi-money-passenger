@@ -1,102 +1,115 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { cookies } from 'next/headers';
-import { z } from 'zod';
-import { pinLoginSchema } from '@/lib/validations/passenger-auth';
-import { createCookieServerClient } from '@/lib/db/supabase-server';
 import dbConnect from '@/lib/db/mongoose-connection';
 import Passenger from '@/lib/db/models/Passenger';
+import { createCookieServerClient } from '@/lib/db/supabase-server';
 
 /**
  * File: /app/api/auth/login/route.ts
- * Purpose: PIN-based login endpoint
+ * Purpose: Complete login after OTP verification
+ * ✅ UPDATED: This route is now called AFTER OTP verification
  * 
  * Flow:
- * 1. Get all passengers (in production, might use email/phone first)
- * 2. Compare PIN with hashed PIN
- * 3. Create Supabase session
- * 4. Return success
+ * 1. User verifies OTP on /verify-otp page
+ * 2. OTP verification creates Supabase session
+ * 3. This route is called to finalize login
+ * 4. Returns success and user data
  */
 
 export async function POST(req: NextRequest) {
   const cookieStore = await cookies();
 
   try {
-    // 1. Validate Body
-    const body = await req.json();
-    const validation = pinLoginSchema.safeParse(body);
+    // 1. Check if user is authenticated (should have session from OTP verification)
+    const supabase = createCookieServerClient(cookieStore);
+    const { data: { session } } = await supabase.auth.getSession();
 
-    if (!validation.success) {
+    if (!session) {
       return NextResponse.json(
-        { error: 'Code PIN invalide', details: validation.error.issues },
-        { status: 400 }
-      );
-    }
-
-    const { pin } = validation.data;
-
-    // 2. Connect to MongoDB
-    await dbConnect();
-
-    // 3. Get all passengers and find one with matching PIN
-    // NOTE: In production, you might want to add a phone/email field first
-    // For now, we'll try PIN matching (this is not ideal for scale)
-    const passengers = await Passenger.find({});
-    
-    let matchedPassenger = null;
-    for (const passenger of passengers) {
-      const isPinCorrect = await passenger.comparePin(pin);
-      if (isPinCorrect) {
-        matchedPassenger = passenger;
-        break;
-      }
-    }
-
-    if (!matchedPassenger) {
-      return NextResponse.json(
-        { error: 'Code PIN incorrect' },
+        { error: 'Non authentifié. Veuillez vérifier votre OTP.' },
         { status: 401 }
       );
     }
 
-    // 4. Create Supabase session
-    const supabase = createCookieServerClient(cookieStore);
-    
-    // Sign in using the authId stored in MongoDB
-    // Note: This requires that the user already exists in Supabase
-    // For this to work, you need to create a JWT or use Supabase admin API
-    // For now, we'll create a session with the passenger data
-    
-    const { data: { session }, error } = await supabase.auth.signInWithPassword({
-      email: matchedPassenger.email || `${matchedPassenger.phoneNumber}@taxi-money.local`,
-      password: pin, // NOTE: This won't work directly - PIN is hashed
-    });
+    // 2. Connect to MongoDB
+    await dbConnect();
 
-    // ALTERNATIVE: Use Supabase Admin API to create session
-    // Since we can't sign in with PIN directly, we need the driver to sign up first
-    // Then use email/password or phone OTP
-    
-    // For now, return error with instructions
+    // 3. Get passenger data
+    const passenger = await Passenger.findOne({ authId: session.user.id });
+
+    if (!passenger) {
+      return NextResponse.json(
+        { error: 'Passager non trouvé' },
+        { status: 404 }
+      );
+    }
+
+    console.log('[LOGIN] ✅ Login successful for:', passenger.phoneNumber);
+
+    // 4. Return success with user data
     return NextResponse.json(
-      { 
-        error: 'Veuillez utiliser la page de vérification OTP avec votre numéro de téléphone',
-        hint: 'Le système PIN est utilisé après l\'authentification OTP'
+      {
+        success: true,
+        message: 'Connexion réussie',
+        user: {
+          id: passenger._id,
+          firstName: passenger.firstName,
+          lastName: passenger.lastName,
+          phoneNumber: passenger.phoneNumber,
+          wallet: passenger.wallet,
+        },
       },
-      { status: 400 }
+      { status: 200 }
     );
 
   } catch (error) {
     console.error('[LOGIN API] Error:', error);
 
-    if (error instanceof z.ZodError) {
-      return NextResponse.json(
-        { error: 'Validation invalide', details: error.issues },
-        { status: 400 }
-      );
-    }
-
     const errorMessage = error instanceof Error ? error.message : 'Une erreur inattendue est survenue';
     return NextResponse.json(
       { error: errorMessage },
+      { status: 500 }
+    );
+  }
+}
+
+/**
+ * GET endpoint to check login status
+ */
+export async function GET(req: NextRequest) {
+  const cookieStore = await cookies();
+
+  try {
+    const supabase = createCookieServerClient(cookieStore);
+    const { data: { session } } = await supabase.auth.getSession();
+
+    if (!session) {
+      return NextResponse.json(
+        { authenticated: false },
+        { status: 200 }
+      );
+    }
+
+    await dbConnect();
+    const passenger = await Passenger.findOne({ authId: session.user.id });
+
+    return NextResponse.json(
+      {
+        authenticated: true,
+        user: passenger ? {
+          id: passenger._id,
+          firstName: passenger.firstName,
+          lastName: passenger.lastName,
+          wallet: passenger.wallet,
+        } : null,
+      },
+      { status: 200 }
+    );
+
+  } catch (error) {
+    console.error('[LOGIN CHECK] Error:', error);
+    return NextResponse.json(
+      { authenticated: false },
       { status: 500 }
     );
   }
