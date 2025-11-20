@@ -2,6 +2,7 @@ import { cookies } from 'next/headers';
 import { createCookieServerClient } from '@/lib/db/supabase-server';
 import dbConnect from '@/lib/db/mongoose-connection';
 import Passenger from '@/lib/db/models/Passenger';
+import Transaction from '@/lib/db/models/Transaction';
 import { redirect } from 'next/navigation';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
@@ -15,6 +16,7 @@ import { HistoryModal } from '@/components/dashboard/HistoryModal';
  * File: /app/(dashboard)/home/page.tsx
  * Purpose: The main passenger dashboard.
  * CHANGED: XAF → Units for display
+ * FIXED: Now fetches real transaction data from MongoDB
  */
 
 export const metadata: Metadata = {
@@ -24,6 +26,17 @@ export const metadata: Metadata = {
 // Helper function to format currency (display as Units)
 function formatUnits(amount: number) {
   return `${amount.toLocaleString('fr-CM')} Units`;
+}
+
+// Helper to format transaction type in French
+function formatTransactionType(type: string): string {
+  const types: Record<string, string> = {
+    'Recharge': 'Rechargement',
+    'Payment': 'Paiement au Chauffeur',
+    'Withdrawal': 'Retrait',
+    'Charge': 'Frais',
+  };
+  return types[type] || type;
 }
 
 // Pattern to get data
@@ -42,11 +55,14 @@ async function getPassengerData() {
     return redirect('/signup');
   }
   
-  const lastTransaction = {
-    type: 'Paiement au Chauffeur',
-    amount: 150,
-    timestamp: new Date().toISOString(),
-  };
+  // ✅ FIXED: Fetch real last transaction from database
+  const lastTransaction = await Transaction.findOne({
+    userId: passenger._id,
+    status: 'Success', // Only show successful transactions
+  })
+    .sort({ createdAt: -1 }) // Most recent first
+    .lean()
+    .exec();
 
   return { passenger, lastTransaction };
 }
@@ -90,7 +106,7 @@ export default async function HomePage() {
         </Card>
       </Link>
 
-      {/* Last Transaction */}
+      {/* Last Transaction - ✅ FIXED: Now shows real data */}
       <div>
         <div className="flex justify-between items-center mb-2">
           <h2 className="text-lg font-semibold">Activité récente</h2>
@@ -101,26 +117,48 @@ export default async function HomePage() {
           </HistoryModal>
         </div>
         
-        <Card className="bg-card bg-gray-900 border-gray-800">
-          <CardContent className="pt-6">
-            <div className="flex items-center justify-between">
-              <div className="flex items-center space-x-3">
-                <div className="p-2 bg-gray-800 rounded-full">
-                  <History className="h-5 w-5" />
+        {lastTransaction ? (
+          <Card className="bg-card bg-gray-900 border-gray-800">
+            <CardContent className="pt-6">
+              <div className="flex items-center justify-between">
+                <div className="flex items-center space-x-3">
+                  <div className="p-2 bg-gray-800 rounded-full">
+                    <History className="h-5 w-5" />
+                  </div>
+                  <div>
+                    <p className="font-medium">
+                      {formatTransactionType(lastTransaction.type)}
+                    </p>
+                    <p className="text-sm text-gray-400">
+                      {new Date(lastTransaction.createdAt).toLocaleString('fr-FR', {
+                        day: 'numeric',
+                        month: 'short',
+                        hour: '2-digit',
+                        minute: '2-digit',
+                      })}
+                    </p>
+                  </div>
                 </div>
-                <div>
-                  <p className="font-medium">{lastTransaction.type}</p>
-                  <p className="text-sm text-gray-400">
-                    {new Date(lastTransaction.timestamp).toLocaleTimeString('fr-FR')}
-                  </p>
+                <div className={`text-lg font-bold ${
+                  lastTransaction.type === 'Recharge' 
+                    ? 'text-green-400' 
+                    : 'text-red-400'
+                }`}>
+                  {lastTransaction.type === 'Recharge' ? '+' : '-'}
+                  {formatUnits(lastTransaction.amount)}
                 </div>
               </div>
-              <div className="text-lg font-bold text-red-400">
-                -{formatUnits(lastTransaction.amount)}
-              </div>
-            </div>
-          </CardContent>
-        </Card>
+            </CardContent>
+          </Card>
+        ) : (
+          <Card className="bg-card bg-gray-900 border-gray-800">
+            <CardContent className="pt-6">
+              <p className="text-center text-gray-400">
+                Aucune transaction récente
+              </p>
+            </CardContent>
+          </Card>
+        )}
       </div>
     </div>
   );
