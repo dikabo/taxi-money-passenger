@@ -9,11 +9,11 @@ import Passenger from '@/lib/db/models/Passenger';
  * Used during login to verify the user is registered
  */
 
-const cameroonPhoneRegex = /^\+237[6-8]\d{8}$/;
+const cameroonPhoneRegex = /[6-8]\d{8}$/;
 
 const checkPhoneSchema = z.object({
   phoneNumber: z.string().regex(cameroonPhoneRegex, {
-    message: 'Le numéro doit être au format +237XXXXXXXXX',
+    message: 'Le numéro doit être au format 6XXXXXXXX',
   }),
 });
 
