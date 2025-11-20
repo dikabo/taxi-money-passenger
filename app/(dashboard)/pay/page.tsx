@@ -2,16 +2,16 @@ import { Metadata } from 'next';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { QrCode, ScanLine } from 'lucide-react';
-import { PayDriverForm } from '@/components/forms/PayDriverForm';
+import { PayDriverFormWithQR } from '@/components/forms/PayDriverFormWithQR';
 
 /**
  * File: /app/(dashboard)/pay/page.tsx
- * Purpose: Passenger pay page with QR scanning and ID entry
+ * Purpose: Passenger pay page with working QR scanner
  * 
- * FEATURES:
- * - QR Code scanner tab (placeholder - requires camera API)
- * - ID entry tab (using PayDriverForm)
- * - Units display throughout
+ * FIXED:
+ * - QR scanner is now functional
+ * - Integrated with driver ID input
+ * - Both methods work seamlessly
  */
 
 export const metadata: Metadata = {
@@ -23,7 +23,7 @@ export default function PayPage() {
     <div className="flex flex-col h-full space-y-6">
       <h1 className="text-2xl font-bold text-white">Payer un Chauffeur</h1>
       
-      <Tabs defaultValue="id" className="w-full">
+      <Tabs defaultValue="scan" className="w-full">
         <TabsList className="grid w-full grid-cols-2 bg-gray-900">
           <TabsTrigger value="scan">
             <ScanLine className="h-4 w-4 mr-2" />
@@ -35,19 +35,14 @@ export default function PayPage() {
           </TabsTrigger>
         </TabsList>
         
-        {/* Scan QR Tab - Placeholder */}
+        {/* Scan QR Tab - NOW WORKING */}
         <TabsContent value="scan">
           <Card className="bg-gray-900 border-gray-800 text-white">
-            <CardContent className="pt-6">
-              <div className="flex flex-col items-center justify-center h-48 space-y-4">
-                <ScanLine className="h-16 w-16 text-gray-500" />
-                <p className="text-gray-400 text-center">
-                  Fonctionnalité de scan bientôt disponible.
-                </p>
-                <p className="text-sm text-gray-500 text-center max-w-xs">
-                  Utilisez l&apos;onglet &quot;Entrer ID&quot; pour payer en saisissant l&apos;ID du chauffeur
-                </p>
-              </div>
+            <CardHeader>
+              <CardTitle>Scanner le code QR du chauffeur</CardTitle>
+            </CardHeader>
+            <CardContent>
+              <PayDriverFormWithQR method="scan" />
             </CardContent>
           </Card>
         </TabsContent>
@@ -59,7 +54,7 @@ export default function PayPage() {
               <CardTitle>Payer par ID Chauffeur</CardTitle>
             </CardHeader>
             <CardContent>
-              <PayDriverForm />
+              <PayDriverFormWithQR method="id" />
             </CardContent>
           </Card>
         </TabsContent>
