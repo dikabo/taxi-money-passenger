@@ -32,11 +32,11 @@ import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/com
  * 3. User is redirected to /verify-otp page
  */
 
-const cameroonPhoneRegex = /^\+237[6-8]\d{8}$/;
+const cameroonPhoneRegex = /[6-8]\d{8}$/;
 
 const phoneLoginSchema = z.object({
   phoneNumber: z.string().regex(cameroonPhoneRegex, {
-    message: 'Le numéro doit être au format +237XXXXXXXXX',
+    message: 'Le numéro doit être au format 6XXXXXXXX',
   }),
 });
 
@@ -49,7 +49,7 @@ export default function LoginPage() {
   const form = useForm<LoginFormValues>({
     resolver: zodResolver(phoneLoginSchema),
     defaultValues: {
-      phoneNumber: '+237',
+      phoneNumber: '',
     },
   });
 
@@ -126,7 +126,7 @@ export default function LoginPage() {
                         <Phone className="absolute left-3 top-3 h-5 w-5 text-gray-400" />
                         <Input
                           {...field}
-                          placeholder="+237600000000"
+                          placeholder="600000000"
                           className="pl-10 bg-gray-800 border-gray-700 text-white"
                           type="tel"
                         />

@@ -143,7 +143,7 @@ export function PassengerSignupForm() {
             <FormItem>
               <FormLabel>Numéro de téléphone</FormLabel>
               <FormControl>
-                <Input placeholder="+237699123456" {...field} className="bg-gray-900 border-gray-800" />
+                <Input placeholder="" {...field} className="bg-gray-900 border-gray-800" />
               </FormControl>
               <FormMessage />
             </FormItem>

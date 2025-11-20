@@ -76,7 +76,7 @@ export const rechargeSchema = z.object({
   rechargePhoneNumber: z
     .string()
     .min(1, 'Veuillez entrer un numéro de téléphone')
-    .regex(cameroonPhoneRegex, 'Veuillez saisir un numéro MoMo valide (+237...)'),
+    .regex(cameroonPhoneRegex, 'Veuillez saisir un numéro MoMo valide (6...)'),
 });
 
 // ✅ NEW SCHEMA FOR PAYING A DRIVER (with Fapshi support)
