@@ -3,53 +3,45 @@
 import { useState } from 'react';
 import { useRouter } from 'next/navigation';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
-import { Button } from '@/components/ui/button';
+import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { Input } from '@/components/ui/input';
+import { Button } from '@/components/ui/button';
+import { QrCode, Loader2 } from 'lucide-react';
+import { toast } from 'sonner';
 import {
   InputOTP,
   InputOTPGroup,
   InputOTPSlot,
 } from '@/components/ui/input-otp';
-import { QRScanner } from '@/components/forms/QRScanner';
-import { ArrowLeft, Loader2 } from 'lucide-react';
-import { toast } from 'sonner';
-
-/**
- * File: /app/pay/page.tsx
- * Purpose: Payment page with QR scanner integration
- * 
- * Flow:
- * 1. Scan QR or enter ID manually
- * 2. Enter payment amount
- * 3. Enter PIN to confirm
- * 4. Process payment
- */
 
 export default function PayPage() {
   const router = useRouter();
-  const [step, setStep] = useState<'scan' | 'payment'>('scan');
+  const [activeTab, setActiveTab] = useState('id');
   const [driverId, setDriverId] = useState('');
   const [amount, setAmount] = useState('');
   const [pin, setPin] = useState('');
   const [isLoading, setIsLoading] = useState(false);
 
-  const handleScanSuccess = (scannedId: string) => {
-    setDriverId(scannedId);
-    setStep('payment');
-  };
-
   const handlePayment = async () => {
     // Validate inputs
-    if (!amount || Number(amount) < 150) {
-      toast.error('Montant invalide', {
+    if (!driverId.trim()) {
+      toast.error('Erreur', {
+        description: 'Veuillez entrer l\'ID du chauffeur',
+      });
+      return;
+    }
+
+    const paymentAmount = Number(amount);
+    if (isNaN(paymentAmount) || paymentAmount < 150) {
+      toast.error('Erreur', {
         description: 'Le montant minimum est de 150 Units',
       });
       return;
     }
 
     if (pin.length !== 4) {
-      toast.error('PIN invalide', {
-        description: 'Le code PIN doit contenir 4 chiffres',
+      toast.error('Erreur', {
+        description: 'Veuillez entrer votre code PIN à 4 chiffres',
       });
       return;
     }
@@ -61,8 +53,8 @@ export default function PayPage() {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
-          driverId,
-          amount: Number(amount),
+          driverId: driverId.trim(),
+          amount: paymentAmount,
           pin,
         }),
       });
@@ -73,17 +65,25 @@ export default function PayPage() {
         throw new Error(result.error || 'Paiement échoué');
       }
 
-      toast.success('Paiement réussi!', {
-        description: `${amount} Units envoyés au chauffeur. Nouveau solde: ${result.newBalance} Units`,
+      toast.success('Paiement Effectué!', {
+        description: `${paymentAmount} Units envoyés à ${result.driverName}. Nouveau solde: ${result.newBalance} Units`,
       });
 
-      // Reset and go home
+      // Reset form
+      setDriverId('');
+      setAmount('');
+      setPin('');
+      
+      // Redirect to home
       setTimeout(() => {
         router.push('/home');
       }, 1500);
 
     } catch (error) {
-      const errorMessage = error instanceof Error ? error.message : 'Une erreur est survenue';
+      let errorMessage = 'Une erreur inattendue est survenue.';
+      if (error instanceof Error) {
+        errorMessage = error.message;
+      }
       toast.error('Échec du paiement', {
         description: errorMessage,
       });
@@ -92,149 +92,114 @@ export default function PayPage() {
     }
   };
 
-  const handleBack = () => {
-    if (step === 'payment') {
-      setStep('scan');
-      setAmount('');
-      setPin('');
-    } else {
-      router.push('/home');
-    }
-  };
-
   return (
-    <div className="flex flex-col min-h-screen bg-black p-6">
-      {/* Header */}
-      <div className="flex items-center mb-6">
-        <Button
-          variant="ghost"
-          size="icon"
-          onClick={handleBack}
-          className="mr-3"
-        >
-          <ArrowLeft className="h-6 w-6" />
-        </Button>
-        <h1 className="text-2xl font-bold text-white">
-          {step === 'scan' ? 'Scanner le code' : 'Confirmer le paiement'}
-        </h1>
-      </div>
-
-      {/* Step 1: QR Scanner */}
-      {step === 'scan' && (
-        <QRScanner onScanSuccess={handleScanSuccess} />
-      )}
-
-      {/* Step 2: Payment Details */}
-      {step === 'payment' && (
-        <div className="space-y-6">
-          {/* Driver Info */}
-          <Card className="bg-gray-900 border-gray-800">
+    <div className="flex flex-col h-full space-y-6">
+      <h1 className="text-2xl font-bold text-white">Payer un Chauffeur</h1>
+      
+      <Tabs value={activeTab} onValueChange={setActiveTab} className="w-full">
+        <TabsList className="grid w-full grid-cols-2 bg-gray-900">
+          <TabsTrigger value="id">
+            <QrCode className="h-4 w-4 mr-2" />
+            Entrer ID
+          </TabsTrigger>
+          <TabsTrigger value="scan" disabled>
+            Scanner QR (Bientôt)
+          </TabsTrigger>
+        </TabsList>
+        
+        {/* Enter ID Tab - COMPLETE PAYMENT FORM */}
+        <TabsContent value="id">
+          <Card className="bg-gray-900 border-gray-800 text-white">
             <CardHeader>
-              <CardTitle className="text-white">Chauffeur</CardTitle>
+              <CardTitle>Payer par ID Chauffeur</CardTitle>
             </CardHeader>
-            <CardContent>
-              <div className="p-3 bg-gray-800 rounded-lg">
-                <p className="text-sm text-gray-400 mb-1">ID Chauffeur</p>
-                <p className="text-lg font-mono font-semibold text-white">
-                  {driverId}
+            <CardContent className="space-y-6">
+              
+              {/* Driver ID Field */}
+              <div className="space-y-2">
+                <label className="text-sm font-medium">ID du Chauffeur</label>
+                <Input 
+                  placeholder="Ex: 67890ABC ou ID-CHAUFFEUR" 
+                  value={driverId}
+                  onChange={(e) => setDriverId(e.target.value)}
+                  className="bg-gray-800 border-gray-700 text-white"
+                  disabled={isLoading}
+                />
+                <p className="text-xs text-gray-400">
+                  Demandez l&apos;ID au chauffeur ou scannez son code QR
                 </p>
               </div>
-            </CardContent>
-          </Card>
 
-          {/* Amount Input */}
-          <Card className="bg-gray-900 border-gray-800">
-            <CardHeader>
-              <CardTitle className="text-white">Montant</CardTitle>
-            </CardHeader>
-            <CardContent className="space-y-3">
-              <div>
-                <Input
+              {/* Amount Field */}
+              <div className="space-y-2">
+                <label className="text-sm font-medium">Montant (Units)</label>
+                <Input 
                   type="number"
-                  placeholder="Montant en Units"
+                  placeholder="150" 
                   value={amount}
                   onChange={(e) => setAmount(e.target.value)}
-                  className="bg-gray-800 border-gray-700 text-white text-2xl h-14"
+                  className="bg-gray-800 border-gray-700 text-white"
                   min="150"
+                  disabled={isLoading}
                 />
-                <p className="text-sm text-gray-400 mt-2">
+                <p className="text-xs text-gray-400">
                   Montant minimum: 150 Units
                 </p>
               </div>
 
-              {/* Quick amounts */}
-              <div className="grid grid-cols-3 gap-2">
-                {[500, 1000, 2000].map((quickAmount) => (
-                  <Button
-                    key={quickAmount}
-                    variant="outline"
-                    onClick={() => setAmount(quickAmount.toString())}
-                    className="bg-gray-800 border-gray-700 hover:bg-gray-700"
+              {/* PIN Field */}
+              <div className="space-y-2">
+                <label className="text-sm font-medium">Votre Code PIN à 4 chiffres</label>
+                <div className="flex justify-center">
+                  <InputOTP 
+                    maxLength={4} 
+                    value={pin}
+                    onChange={(value) => setPin(value)}
+                    disabled={isLoading}
                   >
-                    {quickAmount}
-                  </Button>
-                ))}
+                    <InputOTPGroup className="text-white">
+                      <InputOTPSlot index={0} className="bg-gray-800 border-gray-700" />
+                      <InputOTPSlot index={1} className="bg-gray-800 border-gray-700" />
+                      <InputOTPSlot index={2} className="bg-gray-800 border-gray-700" />
+                      <InputOTPSlot index={3} className="bg-gray-800 border-gray-700" />
+                    </InputOTPGroup>
+                  </InputOTP>
+                </div>
+                <p className="text-xs text-gray-400 text-center">
+                  Pour valider la transaction
+                </p>
               </div>
+
+              {/* Submit Button */}
+              <Button 
+                className="w-full" 
+                onClick={handlePayment}
+                disabled={!driverId || !amount || pin.length !== 4 || isLoading}
+              >
+                {isLoading ? (
+                  <>
+                    <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+                    Traitement...
+                  </>
+                ) : (
+                  'Confirmer le Paiement'
+                )}
+              </Button>
             </CardContent>
           </Card>
+        </TabsContent>
 
-          {/* PIN Input */}
-          <Card className="bg-gray-900 border-gray-800">
-            <CardHeader>
-              <CardTitle className="text-white">Code PIN</CardTitle>
-            </CardHeader>
-            <CardContent className="space-y-4">
-              <div className="flex justify-center">
-                <InputOTP
-                  maxLength={4}
-                  value={pin}
-                  onChange={setPin}
-                  containerClassName="gap-3"
-                >
-                  <InputOTPGroup className="gap-3">
-                    <InputOTPSlot 
-                      index={0} 
-                      className="bg-gray-800 border-gray-700 text-white w-14 h-14 text-2xl"
-                    />
-                    <InputOTPSlot 
-                      index={1} 
-                      className="bg-gray-800 border-gray-700 text-white w-14 h-14 text-2xl"
-                    />
-                    <InputOTPSlot 
-                      index={2} 
-                      className="bg-gray-800 border-gray-700 text-white w-14 h-14 text-2xl"
-                    />
-                    <InputOTPSlot 
-                      index={3} 
-                      className="bg-gray-800 border-gray-700 text-white w-14 h-14 text-2xl"
-                    />
-                  </InputOTPGroup>
-                </InputOTP>
-              </div>
-              <p className="text-sm text-gray-400 text-center">
-                Entrez votre code PIN à 4 chiffres
+        {/* Scan QR Tab - Coming Soon */}
+        <TabsContent value="scan">
+          <Card className="bg-gray-900 border-gray-800 text-white">
+            <CardContent className="pt-6 text-center space-y-4">
+              <p className="text-gray-400">
+                La fonctionnalité de scan QR sera bientôt disponible
               </p>
             </CardContent>
           </Card>
-
-          {/* Confirm Button */}
-          <Button
-            onClick={handlePayment}
-            disabled={!amount || !pin || pin.length !== 4 || isLoading}
-            className="w-full h-14 text-lg"
-            size="lg"
-          >
-            {isLoading ? (
-              <>
-                <Loader2 className="mr-2 h-5 w-5 animate-spin" />
-                Traitement en cours...
-              </>
-            ) : (
-              `Payer ${amount || '0'} Units`
-            )}
-          </Button>
-        </div>
-      )}
+        </TabsContent>
+      </Tabs>
     </div>
   );
 }
