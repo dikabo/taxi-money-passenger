@@ -20,23 +20,25 @@ import { toast as sonnerToast } from 'sonner';
 import { Loader2, Phone } from 'lucide-react';
 import Link from 'next/link';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
+import { createBrowserClient } from '@supabase/ssr';
 
 /**
- * File: /app/(auth)/login/page.tsx
- * Purpose: Phone number-based login page for existing passengers
- * ✅ FIXED: Changed from PIN to phone number + OTP verification
+ * File: /app/(auth)/login/page.tsx (PASSENGER APP)
+ * Purpose: Phone-based login - SIMPLE like signup
+ * ✅ FIXED: Works exactly like signup flow
  * 
  * Flow:
- * 1. User enters phone number
- * 2. System sends OTP to phone
- * 3. User is redirected to /verify-otp page
+ * 1. User enters phone
+ * 2. Supabase sends OTP automatically
+ * 3. Redirect to /verify-otp
+ * 4. Done!
  */
 
-const cameroonPhoneRegex = /[6-8]\d{8}$/;
+const cameroonPhoneRegex = /^[6-8]\d{8}$/;
 
 const phoneLoginSchema = z.object({
   phoneNumber: z.string().regex(cameroonPhoneRegex, {
-    message: 'Le numéro doit être au format 6XXXXXXXX',
+    message: 'Le numéro doit être composé de 9 chiffres (ex: 677123456)',
   }),
 });
 
@@ -57,44 +59,47 @@ export default function LoginPage() {
     setIsLoading(true);
 
     try {
-      // Check if passenger exists with this phone number
+      // 1. Create Supabase client
+      const supabase = createBrowserClient(
+        process.env.NEXT_PUBLIC_SUPABASE_URL!,
+        process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!
+      );
+
+      // 2. Check if user exists in database first
       const checkResponse = await fetch('/api/auth/check-phone', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ phoneNumber: values.phoneNumber }),
       });
 
-      const checkResult = await checkResponse.json();
-
       if (!checkResponse.ok) {
-        throw new Error(checkResult.error || 'Numéro de téléphone non trouvé');
+        const error = await checkResponse.json();
+        throw new Error(error.error || 'Ce numéro n\'est pas enregistré');
       }
 
-      // Send OTP
-      const otpResponse = await fetch('/api/auth/send-otp', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ phoneNumber: values.phoneNumber }),
+      // 3. Send OTP via Supabase (same as signup!)
+      const { error: otpError } = await supabase.auth.signInWithOtp({
+        phone: values.phoneNumber,
+        options: {
+          shouldCreateUser: false, // Don't create new user, only login existing
+        },
       });
 
-      const otpResult = await otpResponse.json();
-
-      if (!otpResponse.ok) {
-        throw new Error(otpResult.error || 'Échec de l\'envoi de l\'OTP');
+      if (otpError) {
+        console.error('[LOGIN] Supabase OTP error:', otpError);
+        throw new Error('Impossible d\'envoyer l\'OTP. Veuillez réessayer.');
       }
 
       sonnerToast.success('OTP envoyé!', {
         description: 'Vérifiez votre téléphone pour le code.',
       });
 
-      // Redirect to OTP verification page
-      router.push(`/verify-otp?phone=${encodeURIComponent(values.phoneNumber)}&type=login`);
+      // 4. Redirect to OTP verification (same as signup!)
+      router.push(`/verify-otp?phone=${encodeURIComponent(values.phoneNumber)}`);
       
     } catch (error) {
-      let errorMessage = 'Une erreur inattendue est survenue.';
-      if (error instanceof Error) {
-        errorMessage = error.message;
-      }
+      console.error('[LOGIN] Error:', error);
+      const errorMessage = error instanceof Error ? error.message : 'Une erreur inattendue est survenue.';
       sonnerToast.error('Échec de la connexion', {
         description: errorMessage,
       });
@@ -109,7 +114,7 @@ export default function LoginPage() {
         <CardHeader className="space-y-2 text-center">
           <CardTitle className="text-2xl">Connexion</CardTitle>
           <CardDescription>
-            Entrez votre numéro de téléphone pour recevoir un code OTP
+            Entrez votre numéro de téléphone
           </CardDescription>
         </CardHeader>
         <CardContent>
@@ -126,14 +131,15 @@ export default function LoginPage() {
                         <Phone className="absolute left-3 top-3 h-5 w-5 text-gray-400" />
                         <Input
                           {...field}
-                          placeholder="600000000"
+                          placeholder="677123456"
                           className="pl-10 bg-gray-800 border-gray-700 text-white"
                           type="tel"
+                          maxLength={9}
                         />
                       </div>
                     </FormControl>
                     <FormDescription>
-                      Le numéro utilisé lors de l&apos;inscription
+                      9 chiffres (ex: 677123456)
                     </FormDescription>
                     <FormMessage />
                   </FormItem>
@@ -147,7 +153,7 @@ export default function LoginPage() {
                     Envoi en cours...
                   </>
                 ) : (
-                  'Recevoir le code OTP'
+                  'Continuer'
                 )}
               </Button>
             </form>
