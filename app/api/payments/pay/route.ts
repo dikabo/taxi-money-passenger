@@ -9,30 +9,23 @@ import Transaction from '@/lib/db/models/Transaction';
 /**
  * File: /app/api/payments/pay/route.ts
  * Purpose: Process passenger-to-driver payment
- * 
- * Flow:
- * 1. Authenticate passenger
- * 2. Verify PIN
- * 3. Check sufficient balance
- * 4. Find driver
- * 5. Transfer funds
- * 6. Create transaction records
- * 7. Return new balance
+ * ✅ FIXED: Improved driver lookup and error handling
  */
 
 // Define minimal Driver schema inline (read-only)
-// This avoids importing from driver app
 const DriverSchema = new mongoose.Schema({
   authId: String,
   firstName: String,
   lastName: String,
   phoneNumber: String,
+  email: String,
+  immatriculation: String,
   vehicleType: String,
   vehicleColor: String,
   vehicleMake: String,
   vehicleModel: String,
-  availableBalance: Number,
-}, { collection: 'drivers' }); // Explicitly set collection name
+  availableBalance: { type: Number, default: 0 },
+}, { collection: 'drivers' });
 
 // Get or create model (handles hot-reload in development)
 const Driver = mongoose.models.Driver || mongoose.model('Driver', DriverSchema);
@@ -55,6 +48,8 @@ export async function POST(req: NextRequest) {
     // 2. Parse and validate request
     const body = await req.json();
     const { driverId, amount, pin } = body;
+
+    console.log('[PAYMENT API] Request received:', { driverId, amount, hasPin: !!pin });
 
     if (!driverId || !amount || !pin) {
       return NextResponse.json(
@@ -79,16 +74,20 @@ export async function POST(req: NextRequest) {
     const passenger = await Passenger.findOne({ authId: session.user.id });
 
     if (!passenger) {
+      console.error('[PAYMENT API] Passenger not found for authId:', session.user.id);
       return NextResponse.json(
         { error: 'Passager non trouvé' },
         { status: 404 }
       );
     }
 
+    console.log('[PAYMENT API] Passenger found:', passenger.firstName, passenger.lastName);
+
     // 5. Verify PIN
     const isPinCorrect = await passenger.comparePin(pin);
 
     if (!isPinCorrect) {
+      console.error('[PAYMENT API] Incorrect PIN');
       return NextResponse.json(
         { error: 'Code PIN incorrect' },
         { status: 401 }
@@ -97,35 +96,62 @@ export async function POST(req: NextRequest) {
 
     // 6. Check balance
     if (passenger.wallet < paymentAmount) {
+      console.error('[PAYMENT API] Insufficient balance:', passenger.wallet, '<', paymentAmount);
       return NextResponse.json(
         { error: 'Solde insuffisant' },
         { status: 400 }
       );
     }
 
-    // 7. Find driver
-    // Try to find by multiple possible ID formats
-    const driver = await Driver.findOne({
-      $or: [
-        { _id: driverId },
-        { authId: driverId },
-        // Add more search patterns if needed
-      ]
-    });
+    // 7. Find driver - ✅ FIXED: Better search with multiple formats
+    let driver;
+    
+    // Clean up the driver ID
+    const cleanDriverId = driverId.trim().toUpperCase();
+    
+    console.log('[PAYMENT API] Searching for driver with ID:', cleanDriverId);
+    
+    // Try to find by _id if it looks like a valid MongoDB ObjectId
+    if (mongoose.Types.ObjectId.isValid(cleanDriverId)) {
+      driver = await Driver.findById(cleanDriverId);
+      console.log('[PAYMENT API] Search by ObjectId result:', driver ? 'Found' : 'Not found');
+    }
+    
+    // If not found, try searching by the first 8 chars of _id (as shown on home page)
+    if (!driver) {
+      const allDrivers = await Driver.find({});
+      driver = allDrivers.find(d => {
+        const shortId = String(d._id).substring(0, 8).toUpperCase();
+        return shortId === cleanDriverId;
+      });
+      console.log('[PAYMENT API] Search by short ID result:', driver ? 'Found' : 'Not found');
+    }
+    
+    // If still not found, try by authId
+    if (!driver) {
+      driver = await Driver.findOne({ authId: cleanDriverId });
+      console.log('[PAYMENT API] Search by authId result:', driver ? 'Found' : 'Not found');
+    }
 
     if (!driver) {
+      console.error('[PAYMENT API] Driver not found for ID:', cleanDriverId);
       return NextResponse.json(
-        { error: 'Chauffeur non trouvé' },
+        { error: 'Chauffeur non trouvé. Vérifiez l\'ID du chauffeur.' },
         { status: 404 }
       );
     }
+
+    console.log('[PAYMENT API] Driver found:', driver.firstName, driver.lastName);
 
     // 8. Transfer funds
     // Deduct from passenger
     passenger.wallet -= paymentAmount;
     await passenger.save();
 
-    // Add to driver
+    // Add to driver (ensure availableBalance exists)
+    if (!driver.availableBalance) {
+      driver.availableBalance = 0;
+    }
     driver.availableBalance += paymentAmount;
     await driver.save();
 
