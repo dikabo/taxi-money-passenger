@@ -1,149 +1,187 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { cookies } from 'next/headers';
-import { z } from 'zod';
-import { payDriverSchema } from '@/lib/validations/passenger-auth';
 import { createCookieServerClient } from '@/lib/db/supabase-server';
 import dbConnect from '@/lib/db/mongoose-connection';
 import Passenger from '@/lib/db/models/Passenger';
+import mongoose from 'mongoose';
 import Transaction from '@/lib/db/models/Transaction';
-import { Types } from 'mongoose';
 
 /**
  * File: /app/api/payments/pay/route.ts
- * Purpose: Internal wallet transfer from Passenger to Driver
- * 
- * Security:
- * - PIN validation
- * - Wallet balance check
- * - Atomic transaction (MongoDB session)
- * - Clear audit trail
+ * Purpose: Process passenger-to-driver payment
  * 
  * Flow:
- * 1. Authenticate user
- * 2. Validate PIN
- * 3. Check wallet balance
- * 4. Deduct from passenger wallet
- * 5. Add to driver's earnings
- * 6. Create transaction record
- * 7. Return success
+ * 1. Authenticate passenger
+ * 2. Verify PIN
+ * 3. Check sufficient balance
+ * 4. Find driver
+ * 5. Transfer funds
+ * 6. Create transaction records
+ * 7. Return new balance
  */
+
+// Define minimal Driver schema inline (read-only)
+// This avoids importing from driver app
+const DriverSchema = new mongoose.Schema({
+  authId: String,
+  firstName: String,
+  lastName: String,
+  phoneNumber: String,
+  vehicleType: String,
+  vehicleColor: String,
+  vehicleMake: String,
+  vehicleModel: String,
+  availableBalance: Number,
+}, { collection: 'drivers' }); // Explicitly set collection name
+
+// Get or create model (handles hot-reload in development)
+const Driver = mongoose.models.Driver || mongoose.model('Driver', DriverSchema);
 
 export async function POST(req: NextRequest) {
   const cookieStore = await cookies();
 
   try {
-    // 1. Authentication
+    // 1. Authenticate
     const supabase = createCookieServerClient(cookieStore);
     const { data: { session } } = await supabase.auth.getSession();
 
     if (!session) {
-      return NextResponse.json({ error: 'Non authentifié' }, { status: 401 });
+      return NextResponse.json(
+        { error: 'Non authentifié' },
+        { status: 401 }
+      );
     }
 
-    // 2. Validate Body
+    // 2. Parse and validate request
     const body = await req.json();
-    const validation = payDriverSchema.safeParse(body);
+    const { driverId, amount, pin } = body;
 
-    if (!validation.success) {
+    if (!driverId || !amount || !pin) {
       return NextResponse.json(
-        { error: 'Données invalides', details: validation.error.issues },
+        { error: 'Données manquantes' },
         { status: 400 }
       );
     }
 
-    const { driverId, amount, pin } = validation.data;
-    const amountAsNumber = Number(amount);
+    const paymentAmount = Number(amount);
 
-    // 3. Connect to MongoDB
+    if (isNaN(paymentAmount) || paymentAmount < 150) {
+      return NextResponse.json(
+        { error: 'Montant invalide. Minimum: 150 Units' },
+        { status: 400 }
+      );
+    }
+
+    // 3. Connect to database
     await dbConnect();
 
-    // 4. Get passenger and verify PIN
+    // 4. Get passenger
     const passenger = await Passenger.findOne({ authId: session.user.id });
 
     if (!passenger) {
-      return NextResponse.json({ error: 'Passager non trouvé' }, { status: 404 });
+      return NextResponse.json(
+        { error: 'Passager non trouvé' },
+        { status: 404 }
+      );
     }
 
-    // Verify PIN
+    // 5. Verify PIN
     const isPinCorrect = await passenger.comparePin(pin);
+
     if (!isPinCorrect) {
       return NextResponse.json(
         { error: 'Code PIN incorrect' },
-        { status: 403 }
+        { status: 401 }
       );
     }
 
-    // 5. Check wallet balance
-    if (passenger.wallet < amountAsNumber) {
+    // 6. Check balance
+    if (passenger.wallet < paymentAmount) {
       return NextResponse.json(
-        { 
-          error: 'Solde insuffisant',
-          currentBalance: passenger.wallet,
-          required: amountAsNumber,
-        },
+        { error: 'Solde insuffisant' },
         { status: 400 }
       );
     }
 
-    // 6. Create transaction record FIRST (before wallet updates)
-    const transaction = await Transaction.create({
+    // 7. Find driver
+    // Try to find by multiple possible ID formats
+    const driver = await Driver.findOne({
+      $or: [
+        { _id: driverId },
+        { authId: driverId },
+        // Add more search patterns if needed
+      ]
+    });
+
+    if (!driver) {
+      return NextResponse.json(
+        { error: 'Chauffeur non trouvé' },
+        { status: 404 }
+      );
+    }
+
+    // 8. Transfer funds
+    // Deduct from passenger
+    passenger.wallet -= paymentAmount;
+    await passenger.save();
+
+    // Add to driver
+    driver.availableBalance += paymentAmount;
+    await driver.save();
+
+    // 9. Create transaction records
+    const transactionNote = `Paiement de ${passenger.firstName} ${passenger.lastName} à ${driver.firstName} ${driver.lastName}`;
+
+    // Passenger transaction (debit)
+    await Transaction.create({
       userId: passenger._id,
       userType: 'Passenger',
       type: 'Payment',
-      status: 'Pending',
-      amount: amountAsNumber,
+      status: 'Success',
+      amount: paymentAmount,
       method: 'Internal',
       phoneNumber: passenger.phoneNumber,
-      externalId: `payment-${Date.now()}-${passenger._id}`,
-      notes: `Payment to driver ${driverId}`,
+      notes: transactionNote,
     });
 
-    console.log('[PAY] Transaction created:', transaction._id);
+    // Driver transaction (credit)
+    await Transaction.create({
+      userId: driver._id,
+      userType: 'Driver',
+      type: 'Payment',
+      status: 'Success',
+      amount: paymentAmount,
+      method: 'Internal',
+      phoneNumber: driver.phoneNumber,
+      notes: transactionNote,
+    });
 
-    // 7. Perform atomic wallet transfer
-    // Deduct from passenger
-    const updatedPassenger = await Passenger.findByIdAndUpdate(
-      passenger._id,
-      { $inc: { wallet: -amountAsNumber } },
-      { new: true }
-    );
+    console.log('='.repeat(80));
+    console.log(`[PAYMENT] ✅ SUCCESS`);
+    console.log(`[PAYMENT] From: ${passenger.firstName} ${passenger.lastName}`);
+    console.log(`[PAYMENT] To: ${driver.firstName} ${driver.lastName}`);
+    console.log(`[PAYMENT] Amount: ${paymentAmount} Units`);
+    console.log(`[PAYMENT] Passenger new balance: ${passenger.wallet} Units`);
+    console.log(`[PAYMENT] Driver new balance: ${driver.availableBalance} Units`);
+    console.log('='.repeat(80));
 
-    if (!updatedPassenger) {
-      throw new Error('Failed to update passenger wallet');
-    }
-
-    console.log('[PAY] Passenger wallet updated. New balance:', updatedPassenger.wallet);
-
-    // 8. Update transaction to Success
-    transaction.status = 'Success';
-    await transaction.save();
-
-    console.log('[PAY] ✅ Payment successful');
-
-    // 9. Return Success
-    return NextResponse.json(
-      {
-        success: true,
-        message: `Paiement de ${amountAsNumber} Units effectué au chauffeur ${driverId}`,
-        transactionId: transaction._id,
-        newBalance: updatedPassenger.wallet,
-      },
-      { status: 200 }
-    );
+    // 10. Return success
+    return NextResponse.json({
+      success: true,
+      message: 'Paiement effectué avec succès',
+      newBalance: passenger.wallet,
+      driverName: `${driver.firstName} ${driver.lastName}`,
+      amount: paymentAmount,
+    });
 
   } catch (error) {
-    console.error('[PAY API] Error:', error);
-
-    if (error instanceof z.ZodError) {
-      return NextResponse.json(
-        { error: 'Validation invalide', details: error.issues },
-        { status: 400 }
-      );
-    }
-
-    const errorMessage = error instanceof Error ? error.message : 'Une erreur inattendue est survenue';
+    console.error('[PAYMENT API] Error:', error);
+    
     return NextResponse.json(
-      { error: errorMessage },
+      { 
+        error: 'Une erreur est survenue',
+        details: error instanceof Error ? error.message : 'Unknown error',
+      },
       { status: 500 }
     );
   }

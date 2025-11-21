@@ -1,22 +1,23 @@
 'use client';
 
-import { useState, useRef, useCallback } from 'react';
+import { useState, useEffect, useRef, useCallback } from 'react';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Card, CardContent } from '@/components/ui/card';
-import { toast as sonnerToast } from 'sonner';
-import { Loader2, X, Copy } from 'lucide-react';
+import { toast } from 'sonner';
+import { Loader2, X, Camera } from 'lucide-react';
 
 /**
  * File: /components/forms/QRScanner.tsx
- * Purpose: QR code scanner using device camera
+ * Purpose: QR code scanner using html5-qrcode library
  * 
- * IMPLEMENTATION APPROACH:
- * 1. User clicks "Start Camera"
- * 2. Camera permission requested
- * 3. Video feed displayed
- * 4. Manual ID entry as fallback
- * 5. Returns driver ID for payment
+ * Features:
+ * - Camera scanning with html5-qrcode
+ * - Manual ID entry fallback
+ * - Camera flip functionality
+ * - Error handling
+ * 
+ * Installation: npm install html5-qrcode
  */
 
 interface QRScannerProps {
@@ -24,190 +25,270 @@ interface QRScannerProps {
 }
 
 export function QRScanner({ onScanSuccess }: QRScannerProps) {
-  const videoRef = useRef<HTMLVideoElement>(null);
   const [isScanning, setIsScanning] = useState(false);
   const [isLoading, setIsLoading] = useState(false);
   const [manualId, setManualId] = useState('');
-  const streamRef = useRef<MediaStream | null>(null);
+  const [facingMode, setFacingMode] = useState<'environment' | 'user'>('environment');
+  
+  const scannerRef = useRef<any>(null);
+  const isMountedRef = useRef(true);
 
-  // Start camera scanning
-  const startCamera = useCallback(async () => {
-    setIsLoading(true);
-    try {
-      // Request camera access
-      const stream = await navigator.mediaDevices.getUserMedia({
-        video: {
-          facingMode: 'environment',
-          width: { ideal: 1280 },
-          height: { ideal: 720 },
-        },
-        audio: false,
-      });
-
-      if (videoRef.current) {
-        videoRef.current.srcObject = stream;
-        streamRef.current = stream;
-        setIsScanning(true);
-
-        sonnerToast.success('Caméra activée', {
-          description: 'Pointez votre caméra vers le code QR du chauffeur',
-        });
+  // Define stopScanner using useCallback to stabilize reference
+  const stopScanner = useCallback(async () => {
+    if (scannerRef.current) {
+      try {
+        await scannerRef.current.stop();
+        scannerRef.current = null;
+      } catch (err) {
+        console.error('Error stopping scanner:', err);
       }
-    } catch (error: unknown) {
-      console.error('Camera error:', error);
-
-      const err = error as Error & { name?: string };
-      if (err.name === 'NotAllowedError') {
-        sonnerToast.error('Permission refusée', {
-          description: 'Veuillez autoriser l\'accès à la caméra',
-        });
-      } else if (err.name === 'NotFoundError') {
-        sonnerToast.error('Caméra non trouvée', {
-          description: 'Aucune caméra disponible',
-        });
-      } else {
-        sonnerToast.error('Erreur caméra', {
-          description: 'Impossible d\'accéder à la caméra',
-        });
-      }
-    } finally {
-      setIsLoading(false);
-    }
-  }, []);
-
-  // Stop camera
-  const stopCamera = useCallback(() => {
-    if (streamRef.current) {
-      streamRef.current.getTracks().forEach((track) => track.stop());
-      streamRef.current = null;
-    }
-    if (videoRef.current) {
-      videoRef.current.srcObject = null;
     }
     setIsScanning(false);
   }, []);
 
-  // Handle manual ID submission
-  const handleManualId = () => {
+  useEffect(() => {
+    isMountedRef.current = true;
+    return () => {
+      isMountedRef.current = false;
+      stopScanner();
+    };
+  }, [stopScanner]);
+
+  const startScanner = async () => {
+    setIsLoading(true);
+
+    try {
+      // Dynamically import html5-qrcode
+      const { Html5Qrcode } = await import('html5-qrcode');
+      
+      // Stop any existing scanner
+      if (scannerRef.current) {
+        await scannerRef.current.stop();
+      }
+
+      // Create new scanner instance
+      const html5QrCode = new Html5Qrcode('qr-reader');
+      scannerRef.current = html5QrCode;
+
+      const config = {
+        fps: 10,
+        qrbox: { width: 250, height: 250 },
+        aspectRatio: 1.0,
+      };
+
+      await html5QrCode.start(
+        { facingMode },
+        config,
+        (decodedText: string) => {
+          console.log('QR Code detected:', decodedText);
+          handleQRDetected(decodedText);
+        },
+        () => {
+          // Silent - scanning errors are normal
+        }
+      );
+
+      if (isMountedRef.current) {
+        setIsScanning(true);
+        setIsLoading(false);
+        toast.success('Scanner activé', {
+          description: 'Pointez la caméra vers le code QR',
+        });
+      }
+
+    } catch (err: any) {
+      console.error('Scanner error:', err);
+      
+      let errorMsg = 'Impossible de démarrer le scanner';
+      
+      if (err.name === 'NotAllowedError') {
+        errorMsg = 'Permission caméra refusée. Autorisez l\'accès dans les paramètres.';
+      } else if (err.name === 'NotFoundError') {
+        errorMsg = 'Aucune caméra trouvée sur cet appareil.';
+      } else if (err.name === 'NotReadableError') {
+        errorMsg = 'Caméra déjà utilisée par une autre application.';
+      }
+      
+      setIsLoading(false);
+      
+      toast.error('Erreur scanner', {
+        description: errorMsg,
+      });
+    }
+  };
+
+  const handleQRDetected = async (code: string) => {
+    await stopScanner();
+    
+    // Extract driver ID from QR code
+    // Handle different QR formats:
+    // - Plain ID: "TAXI1234"
+    // - URL format: "taximoney://driver/TAXI1234"
+    // - MongoDB ID: "507f1f77bcf86cd799439011"
+    
+    let driverId = code;
+    
+    if (code.includes('taximoney://driver/')) {
+      driverId = code.split('taximoney://driver/')[1];
+    } else if (code.includes('driver/')) {
+      driverId = code.split('driver/')[1];
+    }
+    
+    toast.success('QR Code détecté!', {
+      description: `ID: ${driverId}`,
+    });
+    
+    onScanSuccess(driverId);
+  };
+
+  const handleManualEntry = async () => {
     if (!manualId.trim()) {
-      sonnerToast.error('ID requis', {
-        description: 'Entrez l\'ID du chauffeur',
+      toast.error('ID requis', {
+        description: 'Veuillez entrer l\'ID du chauffeur',
       });
       return;
     }
 
-    stopCamera();
-    onScanSuccess(manualId.toUpperCase());
+    await stopScanner();
+    onScanSuccess(manualId.trim().toUpperCase());
     setManualId('');
   };
 
-  // Simulate QR detection (since real QR decoding requires library)
-  const simulateQRDetection = useCallback(() => {
-    // This is a placeholder - in production, use jsQR or zxing-js
-    // For now, show instruction to enter manually
+  const handleFlipCamera = async () => {
+    setFacingMode(prev => prev === 'user' ? 'environment' : 'user');
     if (isScanning) {
-      const detectionMsg = 'Pour scanner, veuillez utiliser un appareil avec lecteur QR. Ou entrez l\'ID manuellement.';
-      console.log(detectionMsg);
+      await stopScanner();
+      setTimeout(() => startScanner(), 100);
     }
-  }, [isScanning]);
+  };
 
   return (
     <div className="space-y-4">
-      {/* Camera Feed */}
-      {isScanning && (
-        <Card className="bg-gray-900 border-gray-800 overflow-hidden">
-          <CardContent className="p-0 relative">
-            <video
-              ref={videoRef}
-              autoPlay
-              playsInline
-              className="w-full h-64 object-cover bg-black"
-            />
-            <div className="absolute inset-0 border-2 border-yellow-400 opacity-50 m-8" />
-            
-            {/* Close button */}
-            <button
-              onClick={stopCamera}
-              className="absolute top-2 right-2 p-2 bg-red-600 rounded-full hover:bg-red-700"
-            >
-              <X className="h-5 w-5 text-white" />
-            </button>
-
-            {/* Instructions */}
-            <div className="absolute bottom-0 left-0 right-0 bg-black bg-opacity-50 p-3 text-white text-sm text-center">
-              Alignez le code QR avec le cadre jaune
+      {/* Scanner Container */}
+      <Card className="bg-gray-900 border-gray-800 overflow-hidden">
+        <CardContent className="p-4">
+          {!isScanning ? (
+            /* Start Scanner Button */
+            <div className="flex flex-col items-center justify-center py-12 space-y-4">
+              <div className="p-6 bg-gray-800 rounded-full">
+                <Camera className="h-12 w-12 text-gray-400" />
+              </div>
+              <div className="text-center">
+                <h3 className="text-lg font-semibold text-white mb-2">
+                  Scanner le code QR
+                </h3>
+                <p className="text-sm text-gray-400 mb-4">
+                  Demandez au chauffeur de montrer son code QR
+                </p>
+              </div>
+              <Button
+                onClick={startScanner}
+                disabled={isLoading}
+                className="w-full max-w-xs"
+                size="lg"
+              >
+                {isLoading ? (
+                  <>
+                    <Loader2 className="mr-2 h-5 w-5 animate-spin" />
+                    Démarrage...
+                  </>
+                ) : (
+                  <>
+                    <Camera className="mr-2 h-5 w-5" />
+                    Activer la caméra
+                  </>
+                )}
+              </Button>
             </div>
-          </CardContent>
-        </Card>
-      )}
+          ) : (
+            /* Active Scanner */
+            <div className="relative">
+              {/* QR Reader Element */}
+              <div id="qr-reader" className="rounded-lg overflow-hidden" />
+              
+              {/* Controls Overlay */}
+              <div className="absolute top-2 right-2 flex gap-2">
+                <Button
+                  size="icon"
+                  variant="secondary"
+                  onClick={handleFlipCamera}
+                  className="rounded-full bg-gray-800 bg-opacity-80 hover:bg-opacity-100"
+                >
+                  <Camera className="h-5 w-5" />
+                </Button>
+                <Button
+                  size="icon"
+                  variant="destructive"
+                  onClick={stopScanner}
+                  className="rounded-full"
+                >
+                  <X className="h-5 w-5" />
+                </Button>
+              </div>
+              
+              {/* Instructions */}
+              <div className="mt-2 text-center">
+                <p className="text-sm text-gray-400">
+                  Placez le code QR dans le cadre
+                </p>
+              </div>
+            </div>
+          )}
+        </CardContent>
+      </Card>
 
-      {/* Manual ID Entry */}
-      <div className="space-y-3">
-        <div>
-          <label className="text-sm font-medium text-white mb-2 block">
-            Ou entrez l&apos;ID du chauffeur
-          </label>
-          <div className="flex gap-2">
-            <Input
-              type="text"
-              placeholder="Ex: TAXI1234"
-              value={manualId}
-              onChange={(e) => setManualId(e.target.value)}
-              className="bg-gray-800 border-gray-700 text-white"
-              disabled={isScanning}
-              onKeyPress={(e) => {
-                if (e.key === 'Enter') {
-                  handleManualId();
-                }
-              }}
-            />
-            <Button
-              onClick={handleManualId}
-              disabled={!manualId.trim() || isScanning}
-              className="whitespace-nowrap"
-            >
-              Entrer
-            </Button>
-          </div>
+      {/* Divider */}
+      <div className="relative">
+        <div className="absolute inset-0 flex items-center">
+          <div className="w-full border-t border-gray-700"></div>
         </div>
-
-        {/* Camera Controls */}
-        {!isScanning ? (
-          <Button
-            onClick={startCamera}
-            disabled={isLoading}
-            className="w-full"
-            variant="outline"
-          >
-            {isLoading ? (
-              <>
-                <Loader2 className="mr-2 h-4 w-4 animate-spin" />
-                Activation caméra...
-              </>
-            ) : (
-              'Démarrer le scanner QR'
-            )}
-          </Button>
-        ) : (
-          <Button
-            onClick={stopCamera}
-            className="w-full"
-            variant="destructive"
-          >
-            Arrêter le scanner
-          </Button>
-        )}
+        <div className="relative flex justify-center text-sm">
+          <span className="px-4 bg-black text-gray-400">OU</span>
+        </div>
       </div>
 
-      {/* Info */}
-      <div className="bg-gray-800 rounded-lg p-3 text-sm text-gray-300">
-        <p className="font-semibold mb-1">💡 Conseil:</p>
-        <ul className="list-disc list-inside space-y-1">
-          <li>Demandez au chauffeur de partager son code QR</li>
-          <li>Ou entrez son ID directement</li>
-          <li>Assurez-vous d&apos;avoir donné permission à la caméra</li>
-        </ul>
-      </div>
+      {/* Manual Entry */}
+      <Card className="bg-gray-900 border-gray-800">
+        <CardContent className="p-4 space-y-3">
+          <div>
+            <label className="text-sm font-medium text-white mb-2 block">
+              Entrer l&apos;ID manuellement
+            </label>
+            <div className="flex gap-2">
+              <Input
+                type="text"
+                placeholder="Ex: TAXI1234"
+                value={manualId}
+                onChange={(e) => setManualId(e.target.value.toUpperCase())}
+                className="bg-gray-800 border-gray-700 text-white"
+                disabled={isScanning}
+                onKeyPress={(e) => {
+                  if (e.key === 'Enter') {
+                    handleManualEntry();
+                  }
+                }}
+              />
+              <Button
+                onClick={handleManualEntry}
+                disabled={!manualId.trim() || isScanning}
+                className="whitespace-nowrap"
+              >
+                Valider
+              </Button>
+            </div>
+          </div>
+
+          {/* Tips */}
+          <div className="bg-gray-800 rounded-lg p-3 text-xs text-gray-400">
+            <p className="font-semibold mb-1">💡 Conseils:</p>
+            <ul className="list-disc list-inside space-y-0.5">
+              <li>Demandez son code QR ou ID au chauffeur</li>
+              <li>Assurez-vous d&apos;avoir la permission caméra</li>
+              <li>Utilisez l&apos;entrée manuelle si le scan échoue</li>
+            </ul>
+          </div>
+        </CardContent>
+      </Card>
     </div>
   );
 }
