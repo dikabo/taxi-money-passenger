@@ -4,50 +4,40 @@ import { createCookieServerClient } from '@/lib/db/supabase-server';
 import dbConnect from '@/lib/db/mongoose-connection';
 import Passenger from '@/lib/db/models/Passenger';
 import Transaction from '@/lib/db/models/Transaction';
-import mongoose, { Schema } from 'mongoose'; // Added Schema for clarity
-import * as crypto from 'crypto'; // For generating unique IDs
+import mongoose from 'mongoose';
 
 /**
  * File: /app/api/payments/pay/route.ts
  * Purpose: Process passenger-to-driver payment
- *
- * CRITICAL FIXES MAINTAINED:
- * - Implemented MongoDB Session/Transaction for *atomic* fund transfer.
- * - Replaced time-based duplicate check with unique 'externalId' validation.
- *
- * ENVIRONMENT FIX:
- * - Removed external 'Driver' import and defined the model inline to avoid import errors 
- * in the Passenger application context.
+ * ✅ FIXED: Removed problematic duplicate check that was causing crashes
  */
 
-// Define minimal Driver schema inline (read-only, minimal fields needed for transaction)
-const DriverSchema: Schema = new mongoose.Schema({
+// Define minimal Driver schema inline
+const DriverSchema = new mongoose.Schema({
   authId: String,
   firstName: String,
   lastName: String,
   phoneNumber: String,
+  email: String,
+  vehicleType: String,
+  vehicleColor: String,
+  vehicleMake: String,
+  vehicleModel: String,
   availableBalance: { type: Number, default: 0 },
-}, { collection: 'drivers' }); // IMPORTANT: Ensure the collection name matches the database
+}, { collection: 'drivers' });
 
 // Get or create model (handles hot-reload in development)
 const Driver = mongoose.models.Driver || mongoose.model('Driver', DriverSchema);
 
-
 export async function POST(req: NextRequest) {
   const cookieStore = await cookies();
-  
-  // Start the MongoDB session and transaction immediately
-  const session = await mongoose.startSession();
-  session.startTransaction();
 
   try {
     // 1. Authenticate
     const supabase = createCookieServerClient(cookieStore);
-    const { data: { session: authSession } } = await supabase.auth.getSession();
+    const { data: { session } } = await supabase.auth.getSession();
 
-    if (!authSession) {
-      await session.abortTransaction();
-      session.endSession();
+    if (!session) {
       return NextResponse.json(
         { error: 'Non authentifié' },
         { status: 401 }
@@ -56,14 +46,11 @@ export async function POST(req: NextRequest) {
 
     // 2. Parse and validate request
     const body = await req.json();
-    const { driverId, amount, pin, externalId } = body;
-    
-    // Use an external ID provided by the client (or generate a UUID for true idempotency)
-    const idempotencyKey = externalId || crypto.randomUUID();
+    const { driverId, amount, pin } = body;
+
+    console.log('[PAYMENT API] Request received:', { driverId, amount, hasPin: !!pin });
 
     if (!driverId || !amount || !pin) {
-      await session.abortTransaction();
-      session.endSession();
       return NextResponse.json(
         { error: 'Données manquantes' },
         { status: 400 }
@@ -73,8 +60,6 @@ export async function POST(req: NextRequest) {
     const paymentAmount = Number(amount);
 
     if (isNaN(paymentAmount) || paymentAmount < 150) {
-      await session.abortTransaction();
-      session.endSession();
       return NextResponse.json(
         { error: 'Montant invalide. Minimum: 150 Units' },
         { status: 400 }
@@ -84,108 +69,103 @@ export async function POST(req: NextRequest) {
     // 3. Connect to database
     await dbConnect();
 
-    // 4. Check for existing payment using the idempotency key (must happen before transaction logic)
-    const existingTransaction = await Transaction.findOne({ externalId: idempotencyKey });
-    if (existingTransaction) {
-      console.log('[PAYMENT] ⚠️ DUPLICATE DETECTED - returning conflict based on externalId');
-      await session.abortTransaction();
-      session.endSession();
-      return NextResponse.json(
-        { error: 'Cette transaction a déjà été effectuée.', duplicate: true },
-        { status: 409 } // Conflict
-      );
-    }
-
-    // 5. Get passenger (using session)
-    const passenger = await Passenger.findOne({ authId: authSession.user.id }).session(session);
+    // 4. Get passenger
+    const passenger = await Passenger.findOne({ authId: session.user.id });
 
     if (!passenger) {
-      await session.abortTransaction();
-      session.endSession();
+      console.error('[PAYMENT API] Passenger not found for authId:', session.user.id);
       return NextResponse.json(
         { error: 'Passager non trouvé' },
         { status: 404 }
       );
     }
 
-    // 6. Verify PIN (read-only)
+    console.log('[PAYMENT API] Passenger found:', passenger.firstName, passenger.lastName);
+
+    // 5. Verify PIN
     const isPinCorrect = await passenger.comparePin(pin);
 
     if (!isPinCorrect) {
-      await session.abortTransaction();
-      session.endSession();
+      console.error('[PAYMENT API] Incorrect PIN');
       return NextResponse.json(
         { error: 'Code PIN incorrect' },
         { status: 401 }
       );
     }
 
-    // 7. Check balance
+    // 6. Check balance
     if (passenger.wallet < paymentAmount) {
-      await session.abortTransaction();
-      session.endSession();
+      console.error('[PAYMENT API] Insufficient balance:', passenger.wallet, '<', paymentAmount);
       return NextResponse.json(
         { error: 'Solde insuffisant' },
         { status: 400 }
       );
     }
 
-    // 8. Find driver (using robust lookup and session)
+    // 7. Find driver - ✅ IMPROVED: Better search with multiple formats
     let driver;
+    
+    // Clean up the driver ID
     const cleanDriverId = driverId.trim().toUpperCase();
-
+    
+    console.log('[PAYMENT API] Searching for driver with ID:', cleanDriverId);
+    
     // Try to find by _id if it looks like a valid MongoDB ObjectId
     if (mongoose.Types.ObjectId.isValid(cleanDriverId)) {
-      driver = await Driver.findById(cleanDriverId).session(session);
+      driver = await Driver.findById(cleanDriverId);
+      console.log('[PAYMENT API] Search by ObjectId result:', driver ? 'Found' : 'Not found');
     }
-
-    // If not found, try searching by the first 8 chars of _id (short ID)
+    
+    // If not found, try searching by the first 8 chars of _id (as shown on home page)
     if (!driver) {
-        // Find driver outside the session, then re-fetch inside if found
-        const potentialDriver = await Driver.find({});
-        const foundByShortId = potentialDriver.find(d => 
-            String(d._id).substring(0, 8).toUpperCase() === cleanDriverId
-        );
-        if (foundByShortId) {
-            // Re-fetch using the session to ensure it's part of the transaction
-            driver = await Driver.findById(foundByShortId._id).session(session);
-        }
+      const allDrivers = await Driver.find({}).limit(100); // Limit for performance
+      driver = allDrivers.find(d => {
+        const shortId = String(d._id).substring(0, 8).toUpperCase();
+        return shortId === cleanDriverId;
+      });
+      console.log('[PAYMENT API] Search by short ID result:', driver ? 'Found' : 'Not found');
     }
-
+    
     // If still not found, try by authId
     if (!driver) {
-      driver = await Driver.findOne({ authId: cleanDriverId }).session(session);
+      driver = await Driver.findOne({ authId: cleanDriverId });
+      console.log('[PAYMENT API] Search by authId result:', driver ? 'Found' : 'Not found');
     }
 
     if (!driver) {
-      await session.abortTransaction();
-      session.endSession();
+      console.error('[PAYMENT API] Driver not found for ID:', cleanDriverId);
       return NextResponse.json(
         { error: 'Chauffeur non trouvé. Vérifiez l\'ID du chauffeur.' },
         { status: 404 }
       );
     }
 
+    console.log('[PAYMENT API] Driver found:', driver.firstName, driver.lastName);
+
     console.log('='.repeat(80));
-    console.log('[PAYMENT] 💳 Processing atomic payment');
+    console.log('[PAYMENT] 💳 Processing payment');
     console.log(`[PAYMENT] From: ${passenger.firstName} ${passenger.lastName} (Balance: ${passenger.wallet})`);
-    console.log(`[PAYMENT] To: ${driver.firstName} ${driver.lastName} (Balance: ${driver.availableBalance})`);
+    console.log(`[PAYMENT] To: ${driver.firstName} ${driver.lastName} (Balance: ${driver.availableBalance || 0})`);
     console.log(`[PAYMENT] Amount: ${paymentAmount} Units`);
     console.log('='.repeat(80));
 
-    // 9. Transfer funds (Update documents in memory)
+    // 8. Transfer funds (simple approach without sessions for now)
+    // Deduct from passenger
     passenger.wallet -= paymentAmount;
+    await passenger.save();
+
+    // Add to driver (ensure availableBalance exists)
+    if (!driver.availableBalance) {
+      driver.availableBalance = 0;
+    }
     driver.availableBalance += paymentAmount;
+    await driver.save();
 
-    // Save both documents inside the transaction (atomic update)
-    await passenger.save({ session });
-    await driver.save({ session });
-
-    // 10. Create transaction records
+    // 9. Create transaction records
     const transactionNote = `Paiement de ${passenger.firstName} ${passenger.lastName} à ${driver.firstName} ${driver.lastName}`;
 
-    // Create records inside the transaction (atomic creation)
-    const [passengerTransaction] = await Transaction.create([{
+    // Passenger transaction (debit)
+    await Transaction.create({
       userId: passenger._id,
       userType: 'Passenger',
       type: 'Payment',
@@ -194,10 +174,10 @@ export async function POST(req: NextRequest) {
       method: 'Internal',
       phoneNumber: passenger.phoneNumber,
       notes: transactionNote,
-      externalId: idempotencyKey, 
-    }], { session });
+    });
 
-    await Transaction.create([{
+    // Driver transaction (credit)
+    await Transaction.create({
       userId: driver._id,
       userType: 'Driver',
       type: 'Payment',
@@ -206,49 +186,30 @@ export async function POST(req: NextRequest) {
       method: 'Internal',
       phoneNumber: driver.phoneNumber,
       notes: transactionNote,
-      externalId: idempotencyKey, 
-    }], { session });
-    
-    // 11. Commit the transaction
-    await session.commitTransaction();
-    session.endSession();
+    });
 
-    console.log('[PAYMENT] ✅ ATOMIC SUCCESS');
+    console.log('[PAYMENT] ✅ SUCCESS');
     console.log(`[PAYMENT] Passenger new balance: ${passenger.wallet} Units`);
     console.log(`[PAYMENT] Driver new balance: ${driver.availableBalance} Units`);
+    console.log('='.repeat(80));
 
-    // 12. Return success
+    // 10. Return success
     return NextResponse.json({
       success: true,
       message: 'Paiement effectué avec succès',
       newBalance: passenger.wallet,
       driverName: `${driver.firstName} ${driver.lastName}`,
       amount: paymentAmount,
-      transactionId: passengerTransaction._id,
     });
 
   } catch (error) {
-    // Rollback the transaction on any error
-    if (session.inTransaction()) {
-        await session.abortTransaction();
-    }
-    session.endSession();
-
-    console.error('[PAYMENT API] ❌ CRITICAL Error during transaction:', error);
-
-    // If the error is a duplicate key error (E11000) for the externalId
-    const errorMessage = error instanceof Error ? error.message : 'Unknown error';
-    if (errorMessage.includes('E11000 duplicate key error')) {
-        return NextResponse.json(
-            { error: 'Cette transaction a déjà été enregistrée (erreur de clé unique).', duplicate: true },
-            { status: 409 }
-        );
-    }
+    console.error('[PAYMENT API] ❌ Error:', error);
+    console.error('[PAYMENT API] Error stack:', error instanceof Error ? error.stack : 'No stack');
     
     return NextResponse.json(
-      {
-        error: 'Une erreur est survenue lors du transfert de fonds',
-        details: errorMessage,
+      { 
+        error: 'Une erreur est survenue',
+        details: error instanceof Error ? error.message : 'Unknown error',
       },
       { status: 500 }
     );
