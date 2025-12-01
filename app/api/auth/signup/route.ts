@@ -12,18 +12,67 @@ import { z } from 'zod';
 /**
  * File: /app/api/auth/signup/route.ts (PASSENGER APP)
  * Purpose: API endpoint for new PASSENGER registration.
- * ✅ FIXED: Now uses signInWithOtp to send real SMS
+ * 
+ * ✅ CRITICAL FIX: Proper phone number handling
+ * - Supabase (OTP) needs: +237XXXXXXXXX (international format)
+ * - MongoDB/Fapshi needs: 6XXXXXXXX (local format, no +237)
  */
 
 interface MongoError {
   code: number;
 }
 
+/**
+ * Format phone for Supabase (needs +237 prefix)
+ */
+function formatPhoneForSupabase(phone: string): string {
+  // Remove all spaces and special characters
+  const cleaned = phone.replace(/[\s\-\(\)]/g, '');
+  
+  // If already has +237, return as is
+  if (cleaned.startsWith('+237')) {
+    return cleaned;
+  }
+  
+  // If starts with 237, add +
+  if (cleaned.startsWith('237')) {
+    return `+${cleaned}`;
+  }
+  
+  // If starts with 6-8 (valid Cameroon mobile), add +237
+  if (/^[6-8]\d{8}$/.test(cleaned)) {
+    return `+237${cleaned}`;
+  }
+  
+  // Otherwise add +237
+  return `+237${cleaned}`;
+}
+
+/**
+ * Clean phone for MongoDB/Fapshi (just 9 digits, no prefix)
+ */
+function cleanPhoneForStorage(phone: string): string {
+  // Remove all non-digits
+  let cleaned = phone.replace(/\D/g, '');
+  
+  // If has 237 prefix, remove it
+  if (cleaned.startsWith('237')) {
+    cleaned = cleaned.substring(3);
+  }
+  
+  // Should be 9 digits starting with 6/7/8
+  if (/^[6-8]\d{8}$/.test(cleaned)) {
+    return cleaned;
+  }
+  
+  throw new Error('Invalid Cameroon phone number format');
+}
+
 export async function POST(req: NextRequest) {
   const cookieStore = await cookies();
 
   try {
-    // 1. Initialize Admin client (to create user)
+    // 1. Initialize Admin client
     const supabaseAdmin = createAdminServerClient(cookieStore);
 
     // 2. Validate Body
@@ -45,13 +94,20 @@ export async function POST(req: NextRequest) {
       ...passengerData
     } = validation.data;
 
-    console.log('[SIGNUP] Attempting signup for phone:', phoneNumber);
+    console.log('[SIGNUP] Original phone from form:', phoneNumber);
+
+    // ✅ CRITICAL: Format phone differently for different purposes
+    const supabasePhone = formatPhoneForSupabase(phoneNumber); // +237XXXXXXXXX for Supabase/Twilio
+    const storagePhone = cleanPhoneForStorage(phoneNumber);     // 6XXXXXXXX for MongoDB/Fapshi
+    
+    console.log('[SIGNUP] Supabase format (for OTP):', supabasePhone);
+    console.log('[SIGNUP] Storage format (for MongoDB/Fapshi):', storagePhone);
 
     // 3. Connect to Database
     await dbConnect();
 
-    // 4. Check for existing passenger
-    const existingPassenger = await Passenger.findOne({ phoneNumber });
+    // 4. Check for existing passenger (use storage format)
+    const existingPassenger = await Passenger.findOne({ phoneNumber: storagePhone });
 
     if (existingPassenger) {
       return NextResponse.json(
@@ -60,14 +116,14 @@ export async function POST(req: NextRequest) {
       );
     }
 
-    // 5. Create Auth User in Supabase (with Admin Client)
-    console.log('[SIGNUP] Creating Supabase user...');
+    // 5. Create Auth User in Supabase (use Supabase format with +237)
+    console.log('[SIGNUP] Creating Supabase user with phone:', supabasePhone);
     const { data: authData, error: authError } =
       await supabaseAdmin.auth.admin.createUser({
-        phone: phoneNumber,
+        phone: supabasePhone, // +237XXXXXXXXX for Twilio
         password: password,
         email: email,
-        phone_confirm: false, // User must verify via OTP
+        phone_confirm: false,
         email_confirm: !!email,
       });
 
@@ -79,42 +135,39 @@ export async function POST(req: NextRequest) {
       throw new Error('Supabase did not return a user.');
     }
 
-    console.log('[SIGNUP] Supabase user created:', authData.user.id);
+    console.log('[SIGNUP] ✅ Supabase user created:', authData.user.id);
 
-    // 6. Create Passenger profile in MongoDB
+    // 6. Create Passenger profile in MongoDB (use storage format without +237)
     const newPassenger = new Passenger({
       ...passengerData,
       authId: authData.user.id,
-      phoneNumber,
+      phoneNumber: storagePhone, // 6XXXXXXXX (no +237) for Fapshi compatibility
       email: email,
-      pin: pin, // Will be auto-hashed by Mongoose middleware
+      pin: pin,
     });
 
     await newPassenger.save();
-    console.log('[SIGNUP] MongoDB passenger created');
+    console.log('[SIGNUP] ✅ MongoDB passenger created');
 
-    // 7. ✅ CRITICAL FIX: Send OTP using signInWithOtp (not signInWithPassword!)
-    // Test numbers (688888888) use Supabase Phone Autofill with OTP: 123456
-    // Real numbers will receive SMS
-    
-    console.log('[SIGNUP] Sending OTP...');
+    // 7. Send OTP using Supabase format
+    console.log('[SIGNUP] Sending OTP to:', supabasePhone);
     const supabaseCookieClient = createCookieServerClient(cookieStore);
     
     const { error: otpError } = await supabaseCookieClient.auth.signInWithOtp({
-      phone: phoneNumber,
+      phone: supabasePhone, // +237XXXXXXXXX for Twilio SMS
       options: {
-        // Don't create a new user - we already created one with admin client
-        shouldCreateUser: false,
+        shouldCreateUser: false, // User already created
       },
     });
 
     if (otpError) {
-      console.error('[SIGNUP] OTP send failed:', otpError);
-      // User is created, but OTP failed - this is recoverable
-      // They can try to login again to get a new OTP
+      console.error('[SIGNUP] ❌ OTP send failed:', otpError);
+      console.error('[SIGNUP] Phone used:', supabasePhone);
+      
+      // User is created but OTP failed
       return NextResponse.json(
         { 
-          error: `Compte créé mais échec de l'envoi du code OTP: ${otpError.message}`,
+          error: `Compte créé mais échec de l'envoi du code OTP: ${otpError.message}. Veuillez réessayer de vous connecter.`,
           userId: authData.user.id,
           canRetry: true,
         },
@@ -123,6 +176,7 @@ export async function POST(req: NextRequest) {
     }
 
     console.log('[SIGNUP] ✅ OTP sent successfully');
+    console.log('='.repeat(80));
 
     // 8. Success
     return NextResponse.json(
