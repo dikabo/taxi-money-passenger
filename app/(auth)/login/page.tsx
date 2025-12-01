@@ -25,13 +25,14 @@ import { createBrowserClient } from '@supabase/ssr';
 /**
  * File: /app/(auth)/login/page.tsx (PASSENGER APP)
  * Purpose: Phone-based login - SIMPLE like signup
- * ✅ FIXED: Works exactly like signup flow
+ * ✅ FIXED: Properly formats phone to +237 for Supabase/Twilio
  * 
  * Flow:
- * 1. User enters phone
- * 2. Supabase sends OTP automatically
- * 3. Redirect to /verify-otp
- * 4. Done!
+ * 1. User enters phone (9 digits)
+ * 2. Format to +237XXXXXXXXX for Supabase
+ * 3. Check if user exists in MongoDB (6XXXXXXXX format)
+ * 4. Supabase sends OTP to +237XXXXXXXXX
+ * 5. Redirect to /verify-otp
  */
 
 const cameroonPhoneRegex = /^[6-8]\d{8}$/;
@@ -43,6 +44,32 @@ const phoneLoginSchema = z.object({
 });
 
 type LoginFormValues = z.infer<typeof phoneLoginSchema>;
+
+/**
+ * Format phone for Supabase (needs +237 prefix)
+ */
+function formatPhoneForSupabase(phone: string): string {
+  // Remove all spaces and special characters
+  const cleaned = phone.replace(/[\s\-\(\)]/g, '');
+  
+  // If already has +237, return as is
+  if (cleaned.startsWith('+237')) {
+    return cleaned;
+  }
+  
+  // If starts with 237, add +
+  if (cleaned.startsWith('237')) {
+    return `+${cleaned}`;
+  }
+  
+  // If starts with 6-8 (valid Cameroon mobile), add +237
+  if (/^[6-8]\d{8}$/.test(cleaned)) {
+    return `+237${cleaned}`;
+  }
+  
+  // Otherwise add +237
+  return `+237${cleaned}`;
+}
 
 export default function LoginPage() {
   const router = useRouter();
@@ -59,17 +86,23 @@ export default function LoginPage() {
     setIsLoading(true);
 
     try {
+      console.log('[LOGIN PAGE] Original phone:', values.phoneNumber);
+      
+      // ✅ CRITICAL: Format phone for Supabase/Twilio
+      const supabasePhone = formatPhoneForSupabase(values.phoneNumber);
+      console.log('[LOGIN PAGE] Formatted phone for Supabase:', supabasePhone);
+
       // 1. Create Supabase client
       const supabase = createBrowserClient(
         process.env.NEXT_PUBLIC_SUPABASE_URL!,
         process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!
       );
 
-      // 2. Check if user exists in database first
+      // 2. Check if user exists in database first (using original format)
       const checkResponse = await fetch('/api/auth/check-phone', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ phoneNumber: values.phoneNumber }),
+        body: JSON.stringify({ phoneNumber: values.phoneNumber }), // Send 9-digit format to API
       });
 
       if (!checkResponse.ok) {
@@ -77,28 +110,32 @@ export default function LoginPage() {
         throw new Error(error.error || 'Ce numéro n\'est pas enregistré');
       }
 
-      // 3. Send OTP via Supabase (same as signup!)
+      console.log('[LOGIN PAGE] ✅ User exists, sending OTP...');
+
+      // 3. Send OTP via Supabase with +237 format
       const { error: otpError } = await supabase.auth.signInWithOtp({
-        phone: values.phoneNumber,
+        phone: supabasePhone, // +237XXXXXXXXX for Twilio
         options: {
           shouldCreateUser: false, // Don't create new user, only login existing
         },
       });
 
       if (otpError) {
-        console.error('[LOGIN] Supabase OTP error:', otpError);
+        console.error('[LOGIN PAGE] ❌ Supabase OTP error:', otpError);
         throw new Error('Impossible d\'envoyer l\'OTP. Veuillez réessayer.');
       }
+
+      console.log('[LOGIN PAGE] ✅ OTP sent successfully');
 
       sonnerToast.success('OTP envoyé!', {
         description: 'Vérifiez votre téléphone pour le code.',
       });
 
-      // 4. Redirect to OTP verification (same as signup!)
-      router.push(`/verify-otp?phone=${encodeURIComponent(values.phoneNumber)}`);
+      // 4. Redirect to OTP verification with formatted phone
+      router.push(`/verify-otp?phone=${encodeURIComponent(supabasePhone)}`);
       
     } catch (error) {
-      console.error('[LOGIN] Error:', error);
+      console.error('[LOGIN PAGE] ❌ Error:', error);
       const errorMessage = error instanceof Error ? error.message : 'Une erreur inattendue est survenue.';
       sonnerToast.error('Échec de la connexion', {
         description: errorMessage,

@@ -1,76 +1,80 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { z } from 'zod';
 import dbConnect from '@/lib/db/mongoose-connection';
 import Passenger from '@/lib/db/models/Passenger';
 
 /**
- * File: /app/api/auth/check-phone/route.ts
- * Purpose: Check if a phone number exists in the system
- * Used during login to verify the user is registered
+ * File: /app/api/auth/check-phone/route.ts (PASSENGER APP)
+ * Purpose: Check if a phone number is registered before login
+ * 
+ * ✅ Phone format: Receives 9-digit format (6XXXXXXXX) from client
  */
 
-const cameroonPhoneRegex = /[6-8]\d{8}$/;
-
-const checkPhoneSchema = z.object({
-  phoneNumber: z.string().regex(cameroonPhoneRegex, {
-    message: 'Le numéro doit être au format 6XXXXXXXX',
-  }),
-});
+/**
+ * Clean phone for MongoDB lookup (just 9 digits, no prefix)
+ */
+function cleanPhoneForStorage(phone: string): string {
+  // Remove all non-digits
+  let cleaned = phone.replace(/\D/g, '');
+  
+  // If has 237 prefix, remove it
+  if (cleaned.startsWith('237')) {
+    cleaned = cleaned.substring(3);
+  }
+  
+  // Should be 9 digits starting with 6/7/8
+  if (/^[6-8]\d{8}$/.test(cleaned)) {
+    return cleaned;
+  }
+  
+  throw new Error('Invalid Cameroon phone number format');
+}
 
 export async function POST(req: NextRequest) {
   try {
-    // 1. Validate Body
     const body = await req.json();
-    const validation = checkPhoneSchema.safeParse(body);
+    const { phoneNumber } = body;
 
-    if (!validation.success) {
+    if (!phoneNumber) {
       return NextResponse.json(
-        { error: 'Numéro de téléphone invalide', details: validation.error.issues },
+        { error: 'Numéro de téléphone requis' },
         { status: 400 }
       );
     }
 
-    const { phoneNumber } = validation.data;
+    console.log('[CHECK PHONE] Original phone:', phoneNumber);
 
-    console.log('[CHECK PHONE] Checking phone:', phoneNumber);
+    // Clean phone for MongoDB lookup
+    const storagePhone = cleanPhoneForStorage(phoneNumber);
+    console.log('[CHECK PHONE] Storage format for lookup:', storagePhone);
 
-    // 2. Connect to MongoDB
+    // Connect to database
     await dbConnect();
 
-    // 3. Check if passenger exists
-    const passenger = await Passenger.findOne({ phoneNumber }).lean();
+    // Check if passenger exists
+    const passenger = await Passenger.findOne({ phoneNumber: storagePhone });
 
     if (!passenger) {
-      console.log('[CHECK PHONE] Phone not found:', phoneNumber);
+      console.log('[CHECK PHONE] ❌ Passenger not found');
       return NextResponse.json(
         { error: 'Ce numéro n\'est pas enregistré. Veuillez créer un compte.' },
         { status: 404 }
       );
     }
 
-    console.log('[CHECK PHONE] ✅ Phone found for passenger:', passenger._id);
+    console.log('[CHECK PHONE] ✅ Passenger found:', passenger._id);
 
-    // 4. Return success (don't send sensitive data)
     return NextResponse.json(
       {
         success: true,
-        message: 'Numéro trouvé',
-        firstName: passenger.firstName, // Optional: for personalized message
+        exists: true,
       },
       { status: 200 }
     );
 
   } catch (error) {
-    console.error('[CHECK PHONE API] Error:', error);
+    console.error('[CHECK PHONE] ❌ Error:', error);
 
-    if (error instanceof z.ZodError) {
-      return NextResponse.json(
-        { error: 'Validation invalide', details: error.issues },
-        { status: 400 }
-      );
-    }
-
-    const errorMessage = error instanceof Error ? error.message : 'Une erreur inattendue est survenue';
+    const errorMessage = error instanceof Error ? error.message : 'Une erreur est survenue';
     return NextResponse.json(
       { error: errorMessage },
       { status: 500 }
