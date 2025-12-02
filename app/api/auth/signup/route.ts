@@ -16,6 +16,10 @@ import { z } from 'zod';
  * ✅ CRITICAL FIX: Proper phone number handling
  * - Supabase (OTP) needs: +237XXXXXXXXX (international format)
  * - MongoDB/Fapshi needs: 6XXXXXXXX (local format, no +237)
+ * 
+ * ✅ NEW FIX: Prevents duplicate Supabase users
+ * - Checks if user exists in Supabase FIRST
+ * - If exists but not in MongoDB, deletes from Supabase and recreates
  */
 
 interface MongoError {
@@ -26,25 +30,20 @@ interface MongoError {
  * Format phone for Supabase (needs +237 prefix)
  */
 function formatPhoneForSupabase(phone: string): string {
-  // Remove all spaces and special characters
   const cleaned = phone.replace(/[\s\-\(\)]/g, '');
   
-  // If already has +237, return as is
   if (cleaned.startsWith('+237')) {
     return cleaned;
   }
   
-  // If starts with 237, add +
   if (cleaned.startsWith('237')) {
     return `+${cleaned}`;
   }
   
-  // If starts with 6-8 (valid Cameroon mobile), add +237
   if (/^[6-8]\d{8}$/.test(cleaned)) {
     return `+237${cleaned}`;
   }
   
-  // Otherwise add +237
   return `+237${cleaned}`;
 }
 
@@ -52,15 +51,12 @@ function formatPhoneForSupabase(phone: string): string {
  * Clean phone for MongoDB/Fapshi (just 9 digits, no prefix)
  */
 function cleanPhoneForStorage(phone: string): string {
-  // Remove all non-digits
   let cleaned = phone.replace(/\D/g, '');
   
-  // If has 237 prefix, remove it
   if (cleaned.startsWith('237')) {
     cleaned = cleaned.substring(3);
   }
   
-  // Should be 9 digits starting with 6/7/8
   if (/^[6-8]\d{8}$/.test(cleaned)) {
     return cleaned;
   }
@@ -114,6 +110,32 @@ export async function POST(req: NextRequest) {
         { error: 'Un utilisateur avec ce numéro de téléphone existe déjà.' }, 
         { status: 409 }
       );
+    }
+
+    // ✅ NEW: Check if user exists in Supabase (orphaned user from previous failed signup)
+    console.log('[SIGNUP] Checking for existing Supabase user...');
+    const { data: existingUsers } = await supabaseAdmin.auth.admin.listUsers();
+    const existingSupabaseUser = existingUsers?.users.find(
+      (      user: { phone: string; }) => user.phone === supabasePhone
+    );
+
+    if (existingSupabaseUser) {
+      console.log('[SIGNUP] ⚠️ Found orphaned Supabase user, deleting...', existingSupabaseUser.id);
+      
+      // Delete the orphaned Supabase user
+      const { error: deleteError } = await supabaseAdmin.auth.admin.deleteUser(
+        existingSupabaseUser.id
+      );
+      
+      if (deleteError) {
+        console.error('[SIGNUP] ❌ Failed to delete orphaned user:', deleteError);
+        return NextResponse.json(
+          { error: 'Ce numéro existe déjà. Veuillez contacter le support.' },
+          { status: 409 }
+        );
+      }
+      
+      console.log('[SIGNUP] ✅ Orphaned user deleted successfully');
     }
 
     // 5. Create Auth User in Supabase (use Supabase format with +237)

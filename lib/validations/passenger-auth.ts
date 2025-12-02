@@ -4,7 +4,9 @@ import { z } from 'zod';
  * File: /lib/validations/passenger-auth.ts
  * Purpose: Zod schemas for passenger authentication and payments.
  *
- * FIXED: Proper type inference and validation for all fields
+ * ✅ FIXED: passengerOtpSchema now accepts BOTH formats:
+ * - 6XXXXXXXX (9 digits, no prefix)
+ * - +237XXXXXXXX (with country code)
  */
 
 const cameroonPhoneRegex = /^[6-8]\d{8}$/;
@@ -42,10 +44,19 @@ export const passengerSignupSchema = z.object({
   }),
 });
 
+// ✅ FIXED: Now accepts BOTH phone formats (with or without +237)
 export const passengerOtpSchema = z.object({
-  phoneNumber: z.string().regex(cameroonPhoneRegex, {
-    message: 'Le numéro doit être au format 6XXXXXXXX',
-  }),
+  phoneNumber: z.string().refine(
+    (phone) => {
+      // Allow either format:
+      // 1. 6XXXXXXXX (9 digits)
+      // 2. +237XXXXXXXX (with country code)
+      return /^[6-8]\d{8}$/.test(phone) || /^\+237[6-8]\d{8}$/.test(phone);
+    },
+    {
+      message: 'Le numéro doit être au format 6XXXXXXXX ou +237XXXXXXXX',
+    }
+  ),
   token: z
     .string()
     .min(6, 'Le code OTP doit être de 6 chiffres')
