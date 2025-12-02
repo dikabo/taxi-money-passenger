@@ -24,7 +24,7 @@ export function LogoutButton() {
 
     if (response.ok) {
       router.refresh(); // This will force a re-check of the session
-      router.push('/signup'); // Redirect to signup page
+      router.push('/login'); // Redirect to login page
     } else {
       sonnerToast.error('Échec de la déconnexion', {
         description: 'Veuillez réessayer.',
