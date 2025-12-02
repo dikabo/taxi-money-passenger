@@ -144,7 +144,7 @@ export async function POST(req: NextRequest) {
       await supabaseAdmin.auth.admin.createUser({
         phone: supabasePhone, // +237XXXXXXXXX for Twilio
         password: password,
-        email: email,
+        email: email || undefined,
         phone_confirm: false,
         email_confirm: !!email,
       });
@@ -159,17 +159,27 @@ export async function POST(req: NextRequest) {
 
     console.log('[SIGNUP] ✅ Supabase user created:', authData.user.id);
 
-    // 6. Create Passenger profile in MongoDB (use storage format without +237)
-    const newPassenger = new Passenger({
-      ...passengerData,
-      authId: authData.user.id,
-      phoneNumber: storagePhone, // 6XXXXXXXX (no +237) for Fapshi compatibility
-      email: email,
-      pin: pin,
-    });
+    // 6. Create Passenger profile in MongoDB
+console.log('[SIGNUP] About to save passenger with:', {
+  authId: authData.user.id,
+  phoneNumber: storagePhone,
+  email: email,
+});
 
-    await newPassenger.save();
-    console.log('[SIGNUP] ✅ MongoDB passenger created');
+try {
+  const newPassenger = new Passenger({
+    ...passengerData,
+    authId: authData.user.id,
+    phoneNumber: storagePhone,
+    email: email || undefined,
+    pin: pin,
+  });
+  await newPassenger.save();
+} catch (mongoError) {
+  console.error('[SIGNUP] MongoDB save error:', mongoError);
+  // Log the full error to see which field caused the duplicate
+  throw mongoError;
+}
 
     // 7. Send OTP using Supabase format
     console.log('[SIGNUP] Sending OTP to:', supabasePhone);

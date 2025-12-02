@@ -46,7 +46,7 @@ export function PassengerSignupForm() {
     defaultValues: {
       firstName: '',
       lastName: '',
-      phoneNumber: '699123456',
+      phoneNumber: '',
       password: '',
       pin: '',
       email: '',

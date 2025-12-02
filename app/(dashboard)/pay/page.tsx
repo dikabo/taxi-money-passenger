@@ -2,17 +2,22 @@
 
 import { useState } from 'react';
 import { useRouter } from 'next/navigation';
+import Passenger from '@/lib/db/models/Passenger';
+import { createCookieServerClient } from '@/lib/db/supabase-server';
+import dbConnect from '@/lib/db/mongoose-connection';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { Input } from '@/components/ui/input';
 import { Button } from '@/components/ui/button';
 import { QrCode, Loader2 } from 'lucide-react';
 import { toast } from 'sonner';
+import { redirect } from 'next/navigation';
 import {
   InputOTP,
   InputOTPGroup,
   InputOTPSlot,
 } from '@/components/ui/input-otp';
+import { cookies } from 'next/dist/server/request/cookies';
 
 export default function PayPage() {
   const router = useRouter();
@@ -21,6 +26,25 @@ export default function PayPage() {
   const [amount, setAmount] = useState('');
   const [pin, setPin] = useState('');
   const [isLoading, setIsLoading] = useState(false);
+
+  // Helper function to fetch the passenger data
+async function getPassengerData() {
+  const cookieStore = await cookies();
+  const supabase = createCookieServerClient(cookieStore);
+
+  const { data: { session }, } = await supabase.auth.getSession();
+  if (!session) {
+    return redirect('/login');
+  }
+
+  await dbConnect();
+  const passenger = await Passenger.findOne({ authId: session.user.id });
+  if (!passenger) {
+    return redirect('/login');
+  }
+
+  return passenger;
+}
 
   const handlePayment = async () => {
     // Validate inputs
