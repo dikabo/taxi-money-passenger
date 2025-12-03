@@ -5,7 +5,6 @@ import { useRouter } from 'next/navigation';
 import { useForm, SubmitHandler } from 'react-hook-form';
 import { zodResolver } from '@hookform/resolvers/zod';
 import { z } from 'zod';
-// We use the French validation schema
 import { passengerSignupSchema } from '@/lib/validations/passenger-auth'; 
 import { Button } from '@/components/ui/button';
 import {
@@ -30,12 +29,31 @@ import { Loader2 } from 'lucide-react';
 /**
  * File: /components/forms/PassengerSignupForm.tsx
  * Purpose: Passenger signup form (with French UI text).
- *
- * THE FIX: The 'onSubmit' logic has been corrected
- * to handle API success/failure separately from navigation.
+ * ✅ FIXED: Redirects with +237 formatted phone for OTP verification
  */
 
 type SignupFormValues = z.infer<typeof passengerSignupSchema>;
+
+/**
+ * Format phone for Supabase (needs +237 prefix)
+ */
+function formatPhoneForSupabase(phone: string): string {
+  const cleaned = phone.replace(/[\s\-\(\)]/g, '');
+  
+  if (cleaned.startsWith('+237')) {
+    return cleaned;
+  }
+  
+  if (cleaned.startsWith('237')) {
+    return `+${cleaned}`;
+  }
+  
+  if (/^[6-8]\d{8}$/.test(cleaned)) {
+    return `+237${cleaned}`;
+  }
+  
+  return `+237${cleaned}`;
+}
 
 export function PassengerSignupForm() {
   const router = useRouter();
@@ -55,10 +73,9 @@ export function PassengerSignupForm() {
     },
   });
 
-  // THIS IS THE CORRECTED LOGIC
   const onSubmit: SubmitHandler<SignupFormValues> = async (values) => {
     setIsLoading(true);
-    let apiError = ''; // We will store any error here
+    let apiError = '';
 
     try {
       const response = await fetch('/api/auth/signup', {
@@ -72,34 +89,31 @@ export function PassengerSignupForm() {
       const result = await response.json();
 
       if (!response.ok) {
-        // If the API sends an error, store it
         apiError = result.error || 'Une erreur inconnue est survenue';
       }
 
     } catch (error) {
-      // If the fetch itself fails
       console.error('Fetch Error:', error);
       apiError = 'Impossible de contacter le serveur. Veuillez réessayer.';
     }
 
-    // Now, we handle the result *after* the try/catch
     if (apiError) {
-      // --- FAILURE CASE ---
       sonnerToast.error('Échec de l\'inscription', {
         description: apiError,
       });
-      setIsLoading(false); // Stop loading
+      setIsLoading(false);
     } else {
-      // --- SUCCESS CASE ---
       sonnerToast.success('Compte créé avec succès!', {
         description: 'Un code OTP a été envoyé à votre téléphone.',
       });
       
-      // Stop loading *before* we navigate
-      setIsLoading(false); 
+      setIsLoading(false);
       
-      // Safely navigate
-      router.push(`/verify-otp?phone=${encodeURIComponent(values.phoneNumber)}`);
+      // ✅ FIX: Format phone to +237 before redirecting (must match OTP send format)
+      const formattedPhone = formatPhoneForSupabase(values.phoneNumber);
+      console.log('[SIGNUP FORM] Redirecting with phone:', formattedPhone);
+      
+      router.push(`/verify-otp?phone=${encodeURIComponent(formattedPhone)}`);
     }
   };
 
@@ -143,7 +157,7 @@ export function PassengerSignupForm() {
             <FormItem>
               <FormLabel>Numéro de téléphone</FormLabel>
               <FormControl>
-                <Input placeholder="" {...field} className="bg-gray-900 border-gray-800" />
+                <Input placeholder="677123456" {...field} className="bg-gray-900 border-gray-800" />
               </FormControl>
               <FormMessage />
             </FormItem>
@@ -248,7 +262,10 @@ export function PassengerSignupForm() {
 
         <Button type="submit" className="w-full" disabled={isLoading}>
           {isLoading ? (
-            <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+            <>
+              <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+              Création en cours...
+            </>
           ) : (
             'Créer le compte'
           )}
