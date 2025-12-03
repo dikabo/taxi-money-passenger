@@ -32,9 +32,9 @@ export default function PayPage() {
     }
 
     const paymentAmount = Number(amount);
-    if (isNaN(paymentAmount) || paymentAmount < 150) {
+    if (isNaN(paymentAmount) || paymentAmount < 100) {
       toast.error('Erreur', {
-        description: 'Le montant minimum est de 150 Units',
+        description: 'Le montant minimum est de 100 Units',
       });
       return;
     }
@@ -135,15 +135,15 @@ export default function PayPage() {
                 <label className="text-sm font-medium">Montant (Units)</label>
                 <Input 
                   type="number"
-                  placeholder="150" 
+                  placeholder="100" 
                   value={amount}
                   onChange={(e) => setAmount(e.target.value)}
                   className="bg-gray-800 border-gray-700 text-white"
-                  min="150"
+                  min="100"
                   disabled={isLoading}
                 />
                 <p className="text-xs text-gray-400">
-                  Montant minimum: 150 Units
+                  Montant minimum: 100 Units
                 </p>
               </div>
 

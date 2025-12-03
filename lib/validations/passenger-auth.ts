@@ -95,8 +95,8 @@ export const payDriverSchema = z.object({
   driverId: z.string().min(6, 'L\'ID du chauffeur est invalide.'),
   amount: numericString
     .min(1, 'Veuillez entrer un montant.')
-    .refine((val) => Number(val) >= 150, {
-      message: 'Le paiement minimum est de 150 XAF',
+    .refine((val) => Number(val) >= 100, {
+      message: 'Le paiement minimum est de 100 XAF',
     }),
   pin: z.string().regex(pinRegex, {
     message: 'Votre code PIN doit être composé de 4 chiffres.',

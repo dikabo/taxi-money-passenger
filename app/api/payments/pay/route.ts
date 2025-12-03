@@ -59,9 +59,9 @@ export async function POST(req: NextRequest) {
 
     const paymentAmount = Number(amount);
 
-    if (isNaN(paymentAmount) || paymentAmount < 150) {
+    if (isNaN(paymentAmount) || paymentAmount < 100) {
       return NextResponse.json(
-        { error: 'Montant invalide. Minimum: 150 Units' },
+        { error: 'Montant invalide. Minimum: 100 Units' },
         { status: 400 }
       );
     }

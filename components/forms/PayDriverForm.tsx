@@ -113,13 +113,13 @@ export function PayDriverForm() {
               <FormControl>
                 <Input 
                   type="number"
-                  placeholder="150" 
+                  placeholder="100" 
                   {...field}
                   className="bg-gray-800 border-gray-700"
                 />
               </FormControl>
               <FormDescription>
-                Montant minimum: 150 Units
+                Montant minimum: 100 Units
               </FormDescription>
               <FormMessage />
             </FormItem>
