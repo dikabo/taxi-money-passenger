@@ -15,8 +15,6 @@ import { HistoryModal } from '@/components/dashboard/HistoryModal';
 /**
  * File: /app/(dashboard)/home/page.tsx
  * Purpose: The main passenger dashboard.
- * CHANGED: XAF → Units for display
- * FIXED: Now fetches real transaction data from MongoDB
  */
 
 export const metadata: Metadata = {
