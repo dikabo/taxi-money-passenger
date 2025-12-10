@@ -1,11 +1,11 @@
 'use client';
 
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
 import { useRouter } from 'next/navigation';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Input } from '@/components/ui/input';
 import { Button } from '@/components/ui/button';
-import { QrCode, Loader2, Scan } from 'lucide-react';
+import { Loader2, Scan, User, Car } from 'lucide-react';
 import { toast } from 'sonner';
 import {
   InputOTP,
@@ -24,8 +24,20 @@ import { Scanner } from '@yudiel/react-qr-scanner';
 /**
  * File: /app/(dashboard)/pay/page.tsx
  * Purpose: The payment page for passengers to pay drivers.
- * ✅ UPDATED: Added QR scanner button that autofills driver ID
+ * ✅ UPDATED: Shows driver name when QR scanned or ID entered
  */
+
+interface DriverInfo {
+  id: string;
+  fullId: string;
+  name: string;
+  firstName: string;
+  lastName: string;
+  vehicleType: string;
+  vehicleColor: string;
+  vehicleMake: string;
+  immatriculation: string;
+}
 
 export default function PayPage() {
   const router = useRouter();
@@ -34,19 +46,54 @@ export default function PayPage() {
   const [pin, setPin] = useState('');
   const [isLoading, setIsLoading] = useState(false);
   const [showScanner, setShowScanner] = useState(false);
+  const [driverInfo, setDriverInfo] = useState<DriverInfo | null>(null);
+  const [isFetchingDriver, setIsFetchingDriver] = useState(false);
+
+  // Fetch driver info when ID changes
+  useEffect(() => {
+    const fetchDriverInfo = async () => {
+      if (driverId.length === 8) {
+        setIsFetchingDriver(true);
+        try {
+          const response = await fetch('/api/drivers/info', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ driverId }),
+          });
+
+          const result = await response.json();
+
+          if (response.ok) {
+            setDriverInfo(result.driver);
+          } else {
+            setDriverInfo(null);
+          }
+        } catch (error) {
+          console.error('[FETCH DRIVER] Error:', error);
+          setDriverInfo(null);
+        } finally {
+          setIsFetchingDriver(false);
+        }
+      } else {
+        setDriverInfo(null);
+      }
+    };
+
+    const debounceTimer = setTimeout(fetchDriverInfo, 500);
+    return () => clearTimeout(debounceTimer);
+  }, [driverId]);
 
   // Handle QR code scan
   const handleScan = (result: string) => {
     if (result) {
       console.log('[QR SCANNER] Scanned:', result);
       
-      // Extract driver ID from scanned data
-      // The QR code contains just the driver ID (e.g., "67890ABC")
-      setDriverId(result.trim().toUpperCase());
+      const scannedId = result.trim().toUpperCase();
+      setDriverId(scannedId);
       setShowScanner(false);
       
       toast.success('QR Code Scanné!', {
-        description: `ID Chauffeur: ${result.trim().toUpperCase()}`,
+        description: `ID Chauffeur: ${scannedId}`,
       });
     }
   };
@@ -56,6 +103,13 @@ export default function PayPage() {
     if (!driverId.trim()) {
       toast.error('Erreur', {
         description: 'Veuillez entrer l\'ID du chauffeur',
+      });
+      return;
+    }
+
+    if (!driverInfo) {
+      toast.error('Erreur', {
+        description: 'Chauffeur non trouvé. Vérifiez l\'ID.',
       });
       return;
     }
@@ -82,7 +136,7 @@ export default function PayPage() {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
-          driverId: driverId.trim(),
+          driverId: driverInfo.fullId, // Use full ID for payment
           amount: paymentAmount,
           pin,
         }),
@@ -102,6 +156,7 @@ export default function PayPage() {
       setDriverId('');
       setAmount('');
       setPin('');
+      setDriverInfo(null);
       
       // Redirect to home
       setTimeout(() => {
@@ -141,6 +196,7 @@ export default function PayPage() {
                 onChange={(e) => setDriverId(e.target.value.toUpperCase())}
                 className="bg-gray-800 border-gray-700 text-white pr-12"
                 disabled={isLoading}
+                maxLength={8}
               />
               {/* QR Scanner Button - positioned inside input at far right */}
               <Button
@@ -157,6 +213,36 @@ export default function PayPage() {
             <p className="text-xs text-gray-400">
               Entrez l&apos;ID ou cliquez sur l&apos;icône pour scanner le QR
             </p>
+
+            {/* Driver Info Display */}
+            {isFetchingDriver && (
+              <div className="flex items-center gap-2 text-gray-400 text-sm">
+                <Loader2 className="h-4 w-4 animate-spin" />
+                <span>Recherche du chauffeur...</span>
+              </div>
+            )}
+
+            {driverInfo && !isFetchingDriver && (
+              <div className="mt-3 p-3 bg-gray-800 rounded-lg border border-gray-700 space-y-2">
+                <div className="flex items-center gap-2">
+                  <User className="h-4 w-4 text-green-400" />
+                  <span className="font-medium text-green-400">Chauffeur trouvé:</span>
+                </div>
+                <div className="pl-6 space-y-1 text-sm">
+                  <p className="text-white font-semibold">{driverInfo.name}</p>
+                  <div className="flex items-center gap-2 text-gray-400">
+                    <Car className="h-3 w-3" />
+                    <span>{driverInfo.vehicleColor} {driverInfo.vehicleMake} - {driverInfo.immatriculation}</span>
+                  </div>
+                </div>
+              </div>
+            )}
+
+            {driverId.length === 8 && !driverInfo && !isFetchingDriver && (
+              <div className="mt-2 p-2 bg-red-900/20 border border-red-800 rounded text-sm text-red-400">
+                Chauffeur non trouvé. Vérifiez l&apos;ID.
+              </div>
+            )}
           </div>
 
           {/* Amount Field */}
@@ -203,7 +289,7 @@ export default function PayPage() {
           <Button 
             className="w-full" 
             onClick={handlePayment}
-            disabled={!driverId || !amount || pin.length !== 4 || isLoading}
+            disabled={!driverId || !driverInfo || !amount || pin.length !== 4 || isLoading}
           >
             {isLoading ? (
               <>

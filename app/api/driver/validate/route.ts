@@ -5,7 +5,6 @@ import mongoose from 'mongoose';
 /**
  * File: /app/api/driver/validate/route.ts (PASSENGER APP)
  * Purpose: Validate driver exists by ID
- * ✅ FIXED: No Driver model import - uses dynamic mongoose model
  * 
  * GET /api/driver/validate?id=DRIVER_ID
  */
@@ -21,7 +20,6 @@ const DriverSchema = new mongoose.Schema({
   vehicleColor: String,
   vehicleMake: String,
   vehicleModel: String,
-  availableBalance: Number,
 }, { collection: 'drivers' }); // Explicitly set collection name
 
 // Get or create model (handles hot-reload in development)
