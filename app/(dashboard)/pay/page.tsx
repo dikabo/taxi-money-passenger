@@ -5,7 +5,7 @@ import { useRouter } from 'next/navigation';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Input } from '@/components/ui/input';
 import { Button } from '@/components/ui/button';
-import { Loader2, Scan, User, Car } from 'lucide-react';
+import {  Loader2, Scan, User, Car } from 'lucide-react';
 import { toast } from 'sonner';
 import {
   InputOTP,
@@ -53,6 +53,7 @@ export default function PayPage() {
   useEffect(() => {
     const fetchDriverInfo = async () => {
       if (driverId.length === 8) {
+        console.log('[PAY PAGE] Fetching driver info for ID:', driverId);
         setIsFetchingDriver(true);
         try {
           const response = await fetch('/api/drivers/info', {
@@ -61,15 +62,19 @@ export default function PayPage() {
             body: JSON.stringify({ driverId }),
           });
 
+          console.log('[PAY PAGE] Response status:', response.status);
           const result = await response.json();
+          console.log('[PAY PAGE] Response data:', result);
 
-          if (response.ok) {
+          if (response.ok && result.success) {
+            console.log('[PAY PAGE] ✅ Driver found:', result.driver.name);
             setDriverInfo(result.driver);
           } else {
+            console.log('[PAY PAGE] ❌ Driver not found or error:', result.error);
             setDriverInfo(null);
           }
         } catch (error) {
-          console.error('[FETCH DRIVER] Error:', error);
+          console.error('[PAY PAGE] ❌ Fetch error:', error);
           setDriverInfo(null);
         } finally {
           setIsFetchingDriver(false);

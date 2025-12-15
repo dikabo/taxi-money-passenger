@@ -49,6 +49,12 @@ export async function POST(req: NextRequest) {
 
     // Get all drivers and find one where _id starts with the provided prefix
     const drivers = await Driver.find({}).lean().exec();
+    console.log('[DRIVER INFO] Total drivers found:', drivers.length);
+    
+    // Debug: Show first few driver IDs
+    if (drivers.length > 0) {
+      console.log('[DRIVER INFO] Sample driver IDs:', drivers.slice(0, 3).map(d => String(d._id).substring(0, 8).toUpperCase()));
+    }
     
     // Type for driver document
     interface DriverDoc {
